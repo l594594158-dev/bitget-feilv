@@ -9,10 +9,16 @@ crontab 每分钟触发（保证程序被拉起），内部自循环 60s。
 import sys, os, json, time, hmac, hashlib, base64
 from datetime import datetime
 
-# 先加载 .env 再到 config
-_env_py = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'load_env.py')
-if os.path.exists(_env_py):
-    exec(open(_env_py).read())
+# 先加载 .env 再到 config（直接内联）
+_dotenv = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env')
+if os.path.exists(_dotenv):
+    with open(_dotenv) as _f:
+        for _line in _f:
+            _line = _line.strip()
+            if _line and not _line.startswith('#'):
+                _k, _, _v = _line.partition('=')
+                if _k.strip() not in os.environ:
+                    os.environ[_k.strip()] = _v.strip()
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from config import *
 
