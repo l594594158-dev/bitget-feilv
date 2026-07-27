@@ -1,0 +1,22 @@
+{
+  "ts": 1785048593926,
+  "timestamp": "2026-07-26 14:49:53",
+  "net_pnl": 0.036,
+  "total_profit": 0.036,
+  "total_loss": 0.0,
+  "threshold": 0.022518,
+  "fee_base": 0.0045036,
+  "details": [
+    {
+      "symbol": "EUL/USDT:USDT",
+      "pnl": 0.036,
+      "contracts": 9.0,
+      "entry_price": 2.502,
+      "notional": 4.5036,
+      "side": "\u591a"
+    }
+  ],
+  "closed": [
+    "EUL/USDT:USDT"
+  ]
+}

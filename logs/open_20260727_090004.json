@@ -1,0 +1,17 @@
+{
+  "ts": 1785114004858,
+  "timestamp": "2026-07-27 09:00:04",
+  "candidates_count": 1,
+  "opened": [
+    {
+      "symbol": "DEXE/USDT:USDT",
+      "side": "short",
+      "qty": 7.0,
+      "price": 3.484,
+      "amount_usdt": 5,
+      "rate": -0.003004,
+      "order_id": "1465439838818439168"
+    }
+  ],
+  "skipped": []
+}

@@ -1,0 +1,40 @@
+{
+  "ts": 1785111450102,
+  "timestamp": "2026-07-27 08:17:30",
+  "net_pnl": 1.066193,
+  "total_profit": 1.155473,
+  "total_loss": -0.08928,
+  "threshold": 0.37455244,
+  "fee_base": 0.074910488,
+  "details": [
+    {
+      "symbol": "TLM/USDT:USDT",
+      "pnl": -0.08928,
+      "margin": 4.993728,
+      "leverage": 5.0,
+      "notional": 24.96864,
+      "side": "\u7a7a"
+    },
+    {
+      "symbol": "EUL/USDT:USDT",
+      "pnl": 1.089,
+      "margin": 4.9896,
+      "leverage": 5.0,
+      "notional": 24.948,
+      "side": "\u7a7a"
+    },
+    {
+      "symbol": "VANRY/USDT:USDT",
+      "pnl": 0.066473,
+      "margin": 4.9987696,
+      "leverage": 5.0,
+      "notional": 24.993848,
+      "side": "\u7a7a"
+    }
+  ],
+  "closed": [
+    "TLM/USDT:USDT",
+    "EUL/USDT:USDT",
+    "VANRY/USDT:USDT"
+  ]
+}

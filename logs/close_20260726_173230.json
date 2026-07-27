@@ -1,0 +1,22 @@
+{
+  "ts": 1785058350626,
+  "timestamp": "2026-07-26 17:32:30",
+  "net_pnl": 0.108,
+  "total_profit": 0.108,
+  "total_loss": 0.0,
+  "threshold": 0.1077,
+  "fee_base": 0.02154,
+  "details": [
+    {
+      "symbol": "DEXE/USDT:USDT",
+      "pnl": 0.108,
+      "margin": 4.308,
+      "leverage": 5.0,
+      "notional": 21.54,
+      "side": "\u7a7a"
+    }
+  ],
+  "closed": [
+    "DEXE/USDT:USDT"
+  ]
+}

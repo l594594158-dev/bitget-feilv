@@ -1,0 +1,53 @@
+{
+  "ts": 1785081608908,
+  "timestamp": "2026-07-27 00:00:08",
+  "candidates_count": 5,
+  "opened": [
+    {
+      "symbol": "TLM/USDT:USDT",
+      "side": "short",
+      "qty": 15006.0,
+      "price": 0.001666,
+      "amount_usdt": 5,
+      "rate": -0.004248,
+      "order_id": "1465303951363182594"
+    },
+    {
+      "symbol": "VANRY/USDT:USDT",
+      "side": "short",
+      "qty": 5928.3,
+      "price": 0.004217,
+      "amount_usdt": 5,
+      "rate": -0.009514,
+      "order_id": "1465303953619718177"
+    },
+    {
+      "symbol": "DEXE/USDT:USDT",
+      "side": "short",
+      "qty": 7.0,
+      "price": 3.535,
+      "amount_usdt": 5,
+      "rate": -0.003228,
+      "order_id": "1465303955842699315"
+    },
+    {
+      "symbol": "EUL/USDT:USDT",
+      "side": "short",
+      "qty": 10.0,
+      "price": 2.498,
+      "amount_usdt": 5,
+      "rate": -0.010555,
+      "order_id": "1465303958086651928"
+    },
+    {
+      "symbol": "ESP/USDT:USDT",
+      "side": "short",
+      "qty": 268.6,
+      "price": 0.093071,
+      "amount_usdt": 5,
+      "rate": -0.010226,
+      "order_id": "1465303960368353293"
+    }
+  ],
+  "skipped": []
+}

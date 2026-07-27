@@ -1,0 +1,35 @@
+{
+  "ts": 1785110406698,
+  "timestamp": "2026-07-27 08:00:06",
+  "candidates_count": 3,
+  "opened": [
+    {
+      "symbol": "TLM/USDT:USDT",
+      "side": "short",
+      "qty": 14880.9,
+      "price": 0.00168,
+      "amount_usdt": 5,
+      "rate": -0.0027,
+      "order_id": "1465424740959817760"
+    },
+    {
+      "symbol": "VANRY/USDT:USDT",
+      "side": "short",
+      "qty": 6043.0,
+      "price": 0.004137,
+      "amount_usdt": 5,
+      "rate": -0.010773,
+      "order_id": "1465424743853887559"
+    },
+    {
+      "symbol": "EUL/USDT:USDT",
+      "side": "short",
+      "qty": 11.0,
+      "price": 2.272,
+      "amount_usdt": 5,
+      "rate": -0.002803,
+      "order_id": "1465424746848620608"
+    }
+  ],
+  "skipped": []
+}
