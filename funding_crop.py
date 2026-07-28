@@ -263,16 +263,38 @@ def cmd_open(wait_second=None):
             amount_usdt = SINGLE_AMOUNT
 
             try:
-                # 用原始 API 设置杠杆（保证 holdSide 也设了，避免 10x）
-                try:
-                    lev_body = json.dumps({
-                        'symbol': sym_raw, 'productType': 'USDT-FUTURES',
-                        'marginCoin': 'USDT', 'leverage': str(LEVERAGE),
-                        'holdSide': cand['side'],
-                    })
-                    bitget_v2_get('/api/v2/mix/account/set-leverage', method='POST', body=lev_body)
-                except Exception:
-                    pass
+                # ── 设置杠杆 + 确认 ────────────────────────────────
+                leverage_ok = False
+                for lev_retry in range(3):
+                    try:
+                        lev_body = json.dumps({
+                            'symbol': sym_raw, 'productType': 'USDT-FUTURES',
+                            'marginCoin': 'USDT', 'leverage': str(LEVERAGE),
+                            'holdSide': cand['side'],
+                        })
+                        lev_resp = bitget_v2_get('/api/v2/mix/account/set-leverage', method='POST', body=lev_body)
+                        if lev_resp.get('code') == '00000':
+                            d = lev_resp.get('data', {})
+                            long_lev = d.get('longLeverage', '')
+                            short_lev = d.get('shortLeverage', '')
+                            current_lev = long_lev if cand['side'] == 'long' else short_lev
+                            if str(current_lev) == str(LEVERAGE):
+                                leverage_ok = True
+                                print(f"   ✅ {ccxt_sym} 杠杆已确认 {current_lev}x")
+                                break
+                            else:
+                                print(f"   ⚠️ {ccxt_sym} set-leverage 返回 {current_lev}x，重试 ({lev_retry+1}/3)")
+                        else:
+                            print(f"   ⚠️ {ccxt_sym} set-leverage 失败: {lev_resp.get('msg')}，重试 ({lev_retry+1}/3)")
+                    except Exception as e:
+                        print(f"   ⚠️ {ccxt_sym} set-leverage 异常: {e}，重试 ({lev_retry+1}/3)")
+                    time.sleep(0.5)
+
+                if not leverage_ok:
+                    print(f"   ❌ {ccxt_sym} 杠杆确认失败（期望 {LEVERAGE}x），跳过此币种")
+                    tg_send(f"⚠️ {ccxt_sym} 开仓跳过：杠杆设置失败，期望 {LEVERAGE}x")
+                    continue
+
                 # 设置逐仓
                 ex.set_margin_mode(MARGIN_MODE, ccxt_sym)
 
@@ -302,13 +324,13 @@ def cmd_open(wait_second=None):
                     continue
 
                 # 确保成交额 ≥ 最低成交额限制
-                notional_check = qty * price  # 币数×价格=成交额（不含sizeMultiplier）
+                notional_check = qty * price
                 min_usdt = float(market.get("info", {}).get("minTradeUSDT", "5"))
                 if notional_check < min_usdt:
                     print(f"   ❌ {ccxt_sym} 成交额 {notional_check:.2f}U 低于最低 {min_usdt}U")
                     continue
 
-                # 直接用原始 API 下单（绕过 ccxt create_market_order 的 decimal bug）
+                # 原始 API 下单
                 sym_raw = market["id"]
                 order_body = json.dumps({
                     "symbol": sym_raw,
@@ -321,7 +343,6 @@ def cmd_open(wait_second=None):
                     "leverage": str(LEVERAGE),
                 })
 
-                # 签名请求
                 resp = bitget_v2_get('/api/v2/mix/order/place-order', method='POST', body=order_body)
 
                 if resp.get("code") == "00000":
@@ -340,7 +361,7 @@ def cmd_open(wait_second=None):
                     print(f"   ❌ {ccxt_sym} 下单失败: {resp.get('code')} - {resp.get('msg')}")
 
             except Exception as e:
-                print(f"   ❌ {ccxt_sym} 开仓失败: {e}")
+                print(f"   ❌ {ccxt_sym} 开仓异常: {e}")
 
         # 日志
         log_entry = {
