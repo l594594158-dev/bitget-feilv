@@ -352,7 +352,12 @@ def cmd_open(wait_second=None):
                     # ── 设置 ±80% 止损 ──────────────────────────
                     stop_price = None
                     try:
-                        stop_price = price * 0.2  # 跌80%后的价格
+                        if side == "buy":  # 多头：跌80%止损
+                            stop_price = price * 0.2
+                            sl_label = "跌80%"
+                        else:  # 空头：涨80%止损
+                            stop_price = price * 1.8
+                            sl_label = "涨80%"
                         stop_side = "sell" if side == "buy" else "buy"
                         stop_body = json.dumps({
                             "symbol": sym_raw,
@@ -369,7 +374,7 @@ def cmd_open(wait_second=None):
                         })
                         sl_resp = bitget_v2_get('/api/v2/mix/order/place-order', method='POST', body=stop_body)
                         if sl_resp.get("code") == "00000":
-                            print(f"   🛡️ {ccxt_sym} 止损已设 @ {stop_price:.6f} (-80%)")
+                            print(f"   🛡️ {ccxt_sym} 止损已设 @ {stop_price:.6f} ({sl_label})")
                         else:
                             print(f"   ⚠️ {ccxt_sym} 止损设置失败: {sl_resp.get('msg')}")
                     except Exception as e:
