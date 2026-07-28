@@ -313,13 +313,16 @@ def cmd_open(wait_second=None):
                     print(f"   ❌ {ccxt_sym} 成交额 {notional_check:.2f}U 低于最低 {min_usdt}U")
                     continue
 
-                # ccxt 下单
+                # ccxt 下单 + 附带止损
+                sl_price = price * 0.2 if cand["side"] == "long" else price * 1.8
                 order = ex.create_order(ccxt_sym, "market", side, float(qty), None, {
                     "marginMode": MARGIN_MODE,
+                    "stopLoss": {"triggerPrice": round(sl_price, 6)},
                 })
                 if order and order.get("id"):
                     order_id = order["id"]
                     print(f"   ✅ {ccxt_sym} {side} {qty}张 @ {price} (保证金 {amount_usdt}U × {LEVERAGE}x) orderId={order_id}")
+                    print(f"   🛡️ 止损 @ {sl_price:.6f}")
 
                     opened.append({
                         "symbol": ccxt_sym,
