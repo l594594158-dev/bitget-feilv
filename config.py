@@ -12,7 +12,7 @@ LEVERAGE = 5               # 杠杆倍数
 MARGIN_MODE = "crossed"    # 全仓
 ORDER_TYPE = "market"      # 市价单
 
-FUNDING_THRESHOLD = 0.0025  # 费率阈值 (±0.25%)
+FUNDING_THRESHOLD = 0.0020  # 费率阈值 (±0.20%)
 SETTLE_WINDOW = 60         # 结算剩余秒数筛选 (< 60s)
 
 EXCLUDE_SYMBOLS = ["BTC", "ETH", "BNB"]  # 排除币种
