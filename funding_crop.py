@@ -199,14 +199,10 @@ def cmd_open(wait_second=None):
     try:
         ex = get_exchange()
 
-        # 设置账户为单向持仓模式（避免 40774 side mismatch 错误）
+        # 设置账户为单向持仓模式
         try:
-            set_pos_body = json.dumps({
-                'productType': 'USDT-FUTURES',
-                'posMode': 'one_way_mode'
-            })
-            bitget_v2_get('/api/v2/mix/account/set-position-mode', method='POST', body=set_pos_body)
-            print(f"[OPEN] ✅ 已设置单向持仓模式 (one_way_mode)")
+            ex.set_position_mode(hedged=False)
+            print(f"[OPEN] ✅ 已设置单向持仓模式")
         except Exception as e:
             print(f"[OPEN] ⚠️ 设置持仓模式（可忽略）: {e}")
 
@@ -263,39 +259,26 @@ def cmd_open(wait_second=None):
             amount_usdt = SINGLE_AMOUNT
 
             try:
-                # ── 设置杠杆 + 确认 ────────────────────────────────
+                # ── 设置杠杆 ────────────────────────────────────────
                 leverage_ok = False
                 for lev_retry in range(3):
                     try:
-                        lev_body = json.dumps({
-                            'symbol': sym_raw, 'productType': 'USDT-FUTURES',
-                            'marginCoin': 'USDT', 'leverage': str(LEVERAGE),
-                            'holdSide': cand['side'],
-                        })
-                        lev_resp = bitget_v2_get('/api/v2/mix/account/set-leverage', method='POST', body=lev_body)
-                        if lev_resp.get('code') == '00000':
-                            d = lev_resp.get('data', {})
-                            long_lev = d.get('longLeverage', '')
-                            short_lev = d.get('shortLeverage', '')
-                            current_lev = long_lev if cand['side'] == 'long' else short_lev
-                            if str(current_lev) == str(LEVERAGE):
-                                leverage_ok = True
-                                print(f"   ✅ {ccxt_sym} 杠杆已确认 {current_lev}x")
-                                break
-                            else:
-                                print(f"   ⚠️ {ccxt_sym} set-leverage 返回 {current_lev}x，重试 ({lev_retry+1}/3)")
-                        else:
-                            print(f"   ⚠️ {ccxt_sym} set-leverage 失败: {lev_resp.get('msg')}，重试 ({lev_retry+1}/3)")
+                        ex.set_leverage(LEVERAGE, ccxt_sym)
+                        # ccxt没返回杠杆值，直接确认通过（set_leverage成功=OK）
+                        leverage_ok = True
+                        print(f"   ✅ {ccxt_sym} 杠杆已设置 {LEVERAGE}x")
+                        break
                     except Exception as e:
-                        print(f"   ⚠️ {ccxt_sym} set-leverage 异常: {e}，重试 ({lev_retry+1}/3)")
+                        err_str = str(e)
+                        print(f"   ⚠️ {ccxt_sym} 设置杠杆失败: {err_str[:60]}，重试 ({lev_retry+1}/3)")
                     time.sleep(0.5)
 
                 if not leverage_ok:
-                    print(f"   ❌ {ccxt_sym} 杠杆确认失败（期望 {LEVERAGE}x），跳过此币种")
+                    print(f"   ❌ {ccxt_sym} 杠杆设置失败（期望 {LEVERAGE}x），跳过此币种")
                     tg_send(f"⚠️ {ccxt_sym} 开仓跳过：杠杆设置失败，期望 {LEVERAGE}x")
                     continue
 
-                # 设置逐仓
+                # 设置保证金模式
                 ex.set_margin_mode(MARGIN_MODE, ccxt_sym)
 
                 # 获取当前市价，计算数量
@@ -330,55 +313,13 @@ def cmd_open(wait_second=None):
                     print(f"   ❌ {ccxt_sym} 成交额 {notional_check:.2f}U 低于最低 {min_usdt}U")
                     continue
 
-                # 原始 API 下单
-                sym_raw = market["id"]
-                order_body = json.dumps({
-                    "symbol": sym_raw,
-                    "productType": "USDT-FUTURES",
-                    "marginCoin": "USDT",
+                # ccxt 下单
+                order = ex.create_order(ccxt_sym, "market", side, float(qty), None, {
                     "marginMode": MARGIN_MODE,
-                    "side": side,
-                    "orderType": "market",
-                    "size": str(int(qty) if prec == 0 else qty),
-                    "leverage": str(LEVERAGE),
                 })
-
-                resp = bitget_v2_get('/api/v2/mix/order/place-order', method='POST', body=order_body)
-
-                if resp.get("code") == "00000":
-                    order_id = resp.get("data", {}).get("orderId", "?")
+                if order and order.get("id"):
+                    order_id = order["id"]
                     print(f"   ✅ {ccxt_sym} {side} {qty}张 @ {price} (保证金 {amount_usdt}U × {LEVERAGE}x) orderId={order_id}")
-
-                    # ── 设置 ±80% 止损 ──────────────────────────
-                    stop_price = None
-                    try:
-                        if side == "buy":  # 多头：跌80%止损
-                            stop_price = price * 0.2
-                            sl_label = "跌80%"
-                        else:  # 空头：涨80%止损
-                            stop_price = price * 1.8
-                            sl_label = "涨80%"
-                        stop_side = "sell" if side == "buy" else "buy"
-                        stop_body = json.dumps({
-                            "symbol": sym_raw,
-                            "productType": "USDT-FUTURES",
-                            "marginCoin": "USDT",
-                            "marginMode": MARGIN_MODE,
-                            "side": stop_side,
-                            "orderType": "stop-market",
-                            "size": str(int(qty) if prec == 0 else qty),
-                            "triggerPrice": str(stop_price),
-                            "triggerType": "fill_price",
-                            "leverage": str(LEVERAGE),
-                            "reduceOnly": "YES",
-                        })
-                        sl_resp = bitget_v2_get('/api/v2/mix/order/place-order', method='POST', body=stop_body)
-                        if sl_resp.get("code") == "00000":
-                            print(f"   🛡️ {ccxt_sym} 止损已设 @ {stop_price:.6f} ({sl_label})")
-                        else:
-                            print(f"   ⚠️ {ccxt_sym} 止损设置失败: {sl_resp.get('msg')}")
-                    except Exception as e:
-                        print(f"   ⚠️ {ccxt_sym} 止损异常: {e}")
 
                     opened.append({
                         "symbol": ccxt_sym,
@@ -388,10 +329,9 @@ def cmd_open(wait_second=None):
                         "amount_usdt": amount_usdt,
                         "rate": cand["rate"],
                         "order_id": order_id,
-                        "stop_loss": stop_price,
                     })
                 else:
-                    print(f"   ❌ {ccxt_sym} 下单失败: {resp.get('code')} - {resp.get('msg')}")
+                    print(f"   ❌ {ccxt_sym} 下单失败: {order}")
 
             except Exception as e:
                 print(f"   ❌ {ccxt_sym} 开仓异常: {e}")

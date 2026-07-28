@@ -104,42 +104,27 @@ def check_and_close():
     # ---- 达标！平仓 ----
     print(f"[TRACKER] 🎯 净浮盈 {net_pnl:.4f} > 阈值 {threshold:.4f}，开始平仓")
 
-    # 市价全平（直调 Bitget API，无间隔）
-    base_url = "https://api.bitget.com"
+    # 市价全平（用 ccxt）
     closed = []
     for d in details:
         try:
-            sym_raw = d["symbol"].split("/")[0] + "USDT"
+            # 先查实时持仓数量
             pos = [p for p in ex.fetch_positions() if p["symbol"] == d["symbol"]]
             if not pos:
                 continue
-            total = float(pos[0].get("info", {}).get("total", "0"))
-            if total <= 0:
+            contracts = float(pos[0].get("contracts", 0) or 0)
+            if contracts <= 0:
                 continue
             side = "sell" if d["side"] == "多" else "buy"
-            body = json.dumps({
-                "symbol": sym_raw,
-                "productType": "USDT-FUTURES",
-                "marginCoin": "USDT",
-                "marginMode": "isolated",
-                "side": side,
-                "orderType": "market",
-                "size": str(int(total)),
-                "leverage": str(int(d["leverage"])),
-                "reduceOnly": "YES",
+            order = ex.create_order(d["symbol"], "market", side, float(contracts), None, {
+                "reduceOnly": True,
+                "marginMode": "crossed",
             })
-            t = str(int(time.time() * 1000))
-            msg = t + "POST" + "/api/v2/mix/order/place-order" + body
-            sig = base64.b64encode(hmac.new(API_SECRET.encode(), msg.encode(), hashlib.sha256).digest()).decode()
-            hdrs = {"ACCESS-KEY": API_KEY, "ACCESS-SIGN": sig, "ACCESS-TIMESTAMP": t,
-                    "ACCESS-PASSPHRASE": API_PASS, "Content-Type": "application/json"}
-            r = requests.post(base_url + "/api/v2/mix/order/place-order", headers=hdrs, data=body, timeout=10)
-            resp = r.json()
-            if resp.get("code") == "00000":
+            if order and order.get("id"):
                 closed.append(d["symbol"])
                 print(f"   ✅ 平仓 {d['symbol']} 浮盈 {d['pnl']:.4f}U")
             else:
-                print(f"   ❌ {d['symbol']} 平仓失败: {resp.get('code')} - {resp.get('msg')}")
+                print(f"   ❌ {d['symbol']} 平仓失败: {order}")
         except Exception as e:
             print(f"   ❌ {d['symbol']} 平仓异常: {e}")
 
