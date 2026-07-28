@@ -336,7 +336,7 @@ def cmd_open(wait_second=None):
                     "symbol": sym_raw,
                     "productType": "USDT-FUTURES",
                     "marginCoin": "USDT",
-                    "marginMode": "isolated",
+                    "marginMode": MARGIN_MODE,
                     "side": side,
                     "orderType": "market",
                     "size": str(int(qty) if prec == 0 else qty),

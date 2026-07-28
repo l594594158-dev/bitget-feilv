@@ -9,7 +9,7 @@ API_PASS = os.getenv("BITGET_API_PASS", "")
 # === 策略参数 ===
 SINGLE_AMOUNT = 5          # 单笔开仓保证金 (USDT)
 LEVERAGE = 5               # 杠杆倍数
-MARGIN_MODE = "isolated"   # 逐仓
+MARGIN_MODE = "crossed"    # 全仓
 ORDER_TYPE = "market"      # 市价单
 
 FUNDING_THRESHOLD = 0.0025  # 费率阈值 (±0.25%)
