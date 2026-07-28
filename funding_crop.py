@@ -348,6 +348,33 @@ def cmd_open(wait_second=None):
                 if resp.get("code") == "00000":
                     order_id = resp.get("data", {}).get("orderId", "?")
                     print(f"   ✅ {ccxt_sym} {side} {qty}张 @ {price} (保证金 {amount_usdt}U × {LEVERAGE}x) orderId={order_id}")
+
+                    # ── 设置 ±80% 止损 ──────────────────────────
+                    stop_price = None
+                    try:
+                        stop_price = price * 0.2  # 跌80%后的价格
+                        stop_side = "sell" if side == "buy" else "buy"
+                        stop_body = json.dumps({
+                            "symbol": sym_raw,
+                            "productType": "USDT-FUTURES",
+                            "marginCoin": "USDT",
+                            "marginMode": MARGIN_MODE,
+                            "side": stop_side,
+                            "orderType": "stop-market",
+                            "size": str(int(qty) if prec == 0 else qty),
+                            "triggerPrice": str(stop_price),
+                            "triggerType": "fill_price",
+                            "leverage": str(LEVERAGE),
+                            "reduceOnly": "YES",
+                        })
+                        sl_resp = bitget_v2_get('/api/v2/mix/order/place-order', method='POST', body=stop_body)
+                        if sl_resp.get("code") == "00000":
+                            print(f"   🛡️ {ccxt_sym} 止损已设 @ {stop_price:.6f} (-80%)")
+                        else:
+                            print(f"   ⚠️ {ccxt_sym} 止损设置失败: {sl_resp.get('msg')}")
+                    except Exception as e:
+                        print(f"   ⚠️ {ccxt_sym} 止损异常: {e}")
+
                     opened.append({
                         "symbol": ccxt_sym,
                         "side": cand["side"],
@@ -356,6 +383,7 @@ def cmd_open(wait_second=None):
                         "amount_usdt": amount_usdt,
                         "rate": cand["rate"],
                         "order_id": order_id,
+                        "stop_loss": stop_price,
                     })
                 else:
                     print(f"   ❌ {ccxt_sym} 下单失败: {resp.get('code')} - {resp.get('msg')}")
