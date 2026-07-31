@@ -341,23 +341,33 @@ def cmd_open(wait_second=None):
                         "margin_mode_confirmed": False,
                     })
 
-                    # ── 回读校验：确认开出来的仓确实是 MARGIN_MODE（全仓/逐仓） ──
+                    # ── 强制补切全仓 + 回读确认（关键：Bitget 下单不认 marginMode 参数，
+                    #    新开仓默认/保持 isolated，必须在下单后显式 set_margin_mode 切回 crossed） ──
                     try:
                         time.sleep(1.0)
+                        # 1) 先强制切回全仓（已验证对持仓币可成功切换）
+                        try:
+                            set_r = ex.set_margin_mode(MARGIN_MODE, ccxt_sym)
+                            data_mm = (set_r.get("data") or {}).get("marginMode") if isinstance(set_r, dict) else None
+                            print(f"   🔄 {ccxt_sym} 补切全仓返回: {data_mm}")
+                        except Exception as se:
+                            print(f"   ⚠️ {ccxt_sym} 补切全仓失败,尝试回读: {str(se)[:80]}")
+                            time.sleep(1.0)
+                        # 2) 回读确认最终仓位模式
                         chk = ex.fetch_positions([ccxt_sym])
                         for cp in chk:
                             if cp.get("contracts") and float(cp["contracts"]) > 0:
                                 actual_mm = cp.get("marginMode") or "unknown"
                                 if actual_mm != MARGIN_MODE:
                                     print(f"   ⚠️ {ccxt_sym} 仓位模式={actual_mm}，期望={MARGIN_MODE}！")
-                                    tg_send(f"⚠️ {ccxt_sym} 开仓后为{actual_mm}，非{MARGIN_MODE}！请检查")
+                                    tg_send(f"⚠️ {ccxt_sym} 开仓后仍为{actual_mm}，非{MARGIN_MODE}！请人工检查")
                                 else:
                                     print(f"   ✅ {ccxt_sym} 仓位模式已确认={actual_mm}")
                                     opened[-1]["margin_mode_confirmed"] = True
                                 opened[-1]["actual_margin_mode"] = actual_mm
                                 break
                     except Exception as e:
-                        print(f"   (回读校验跳过: {str(e)[:60]})")
+                        print(f"   (补切/回读校验跳过: {str(e)[:60]})")
                         opened[-1]["actual_margin_mode"] = "unverified"
                 else:
                     print(f"   ❌ {ccxt_sym} 下单失败: {order}")
