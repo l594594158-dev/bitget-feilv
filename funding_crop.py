@@ -278,8 +278,12 @@ def cmd_open(wait_second=None):
                     tg_send(f"⚠️ {ccxt_sym} 开仓跳过：杠杆设置失败，期望 {LEVERAGE}x")
                     continue
 
-                # 设置保证金模式
-                ex.set_margin_mode(MARGIN_MODE, ccxt_sym)
+                # 设置保证金模式（关键：必须在该币无持仓/无挂单时才能切换成功；
+                # 失败不影响后续下单，下单参数里会再次强制 marginMode）
+                try:
+                    ex.set_margin_mode(MARGIN_MODE, ccxt_sym)
+                except Exception as e:
+                    print(f"   ⚠️ {ccxt_sym} set_margin_mode 失败(继续下单，下单参数会强制): {str(e)[:80]}")
 
                 # 获取当前市价，计算数量
                 ticker = ex.fetch_ticker(ccxt_sym)
@@ -313,15 +317,16 @@ def cmd_open(wait_second=None):
                     print(f"   ❌ {ccxt_sym} 成交额 {notional_check:.2f}U 低于最低 {min_usdt}U")
                     continue
 
-                # ccxt 下单 + 附带止损
+                # ccxt 下单 + 附带止损（marginMode 在参数里强制全仓/逐仓，不依赖 set_margin_mode）
                 sl_price = price * 0.2 if cand["side"] == "long" else price * 1.8
                 order = ex.create_order(ccxt_sym, "market", side, float(qty), None, {
                     "marginMode": MARGIN_MODE,
+                    "productType": "USDT-FUTURES",
                     "stopLoss": {"triggerPrice": round(sl_price, 6)},
                 })
                 if order and order.get("id"):
                     order_id = order["id"]
-                    print(f"   ✅ {ccxt_sym} {side} {qty}张 @ {price} (保证金 {amount_usdt}U × {LEVERAGE}x) orderId={order_id}")
+                    print(f"   ✅ {ccxt_sym} {side} {qty}张 @ {price} (保证金 {amount_usdt}U × {LEVERAGE}x {MARGIN_MODE}) orderId={order_id}")
                     print(f"   🛡️ 止损 @ {sl_price:.6f}")
 
                     opened.append({
@@ -333,6 +338,22 @@ def cmd_open(wait_second=None):
                         "rate": cand["rate"],
                         "order_id": order_id,
                     })
+
+                    # ── 回读校验：确认开出来的仓确实是 MARGIN_MODE（全仓/逐仓） ──
+                    try:
+                        time.sleep(1.0)
+                        chk = ex.fetch_positions([ccxt_sym])
+                        for cp in chk:
+                            if cp.get("contracts") and float(cp["contracts"]) > 0:
+                                actual_mm = cp.get("marginMode") or "unknown"
+                                if actual_mm != MARGIN_MODE:
+                                    print(f"   ⚠️ {ccxt_sym} 仓位模式={actual_mm}，期望={MARGIN_MODE}！")
+                                    tg_send(f"⚠️ {ccxt_sym} 开仓后为{actual_mm}，非{MARGIN_MODE}！请检查")
+                                else:
+                                    print(f"   ✅ {ccxt_sym} 仓位模式已确认={actual_mm}")
+                                break
+                    except Exception as e:
+                        print(f"   (回读校验跳过: {str(e)[:60]})")
                 else:
                     print(f"   ❌ {ccxt_sym} 下单失败: {order}")
 
@@ -357,7 +378,7 @@ def cmd_open(wait_second=None):
             msg = f"🚀 开仓 {len(opened)} 个:\n"
             for o in opened:
                 msg += f"• {o['symbol']} {o['side']} {o['qty']:.4f}张 @ {o['price']:.4f}\n"
-            msg += f"  (保证金 {SINGLE_AMOUNT}U × {LEVERAGE}x 逐仓)"
+            msg += f"  (保证金 {SINGLE_AMOUNT}U × {LEVERAGE}x {MARGIN_MODE})"
             tg_send(msg)
         if skipped:
             tg_send(f"⏭ 跳过已有持仓: {', '.join(skipped[:5])}{'…' if len(skipped)>5 else ''}")
