@@ -361,7 +361,9 @@ def cmd_open(wait_second=None):
                         for cp in chk:
                             if cp.get("contracts") and float(cp["contracts"]) > 0:
                                 actual_mm = cp.get("marginMode") or "unknown"
-                                margin_ok = (actual_mm == MARGIN_MODE)
+                                # Bitget/ccxt 可能返回 cross 或 crossed，都归一化为 crossed 比较
+                                norm_actual = "crossed" if str(actual_mm).lower() in ("cross", "crossed") else str(actual_mm).lower()
+                                margin_ok = (norm_actual == MARGIN_MODE)
                                 if margin_ok:
                                     print(f"   ✅ {ccxt_sym} 仓位模式已确认={actual_mm} (全仓) ")
                                     opened[-1]["margin_mode_confirmed"] = True
