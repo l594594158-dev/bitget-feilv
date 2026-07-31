@@ -337,6 +337,8 @@ def cmd_open(wait_second=None):
                         "amount_usdt": amount_usdt,
                         "rate": cand["rate"],
                         "order_id": order_id,
+                        "margin_mode": MARGIN_MODE,
+                        "margin_mode_confirmed": False,
                     })
 
                     # ── 回读校验：确认开出来的仓确实是 MARGIN_MODE（全仓/逐仓） ──
@@ -351,9 +353,12 @@ def cmd_open(wait_second=None):
                                     tg_send(f"⚠️ {ccxt_sym} 开仓后为{actual_mm}，非{MARGIN_MODE}！请检查")
                                 else:
                                     print(f"   ✅ {ccxt_sym} 仓位模式已确认={actual_mm}")
+                                    opened[-1]["margin_mode_confirmed"] = True
+                                opened[-1]["actual_margin_mode"] = actual_mm
                                 break
                     except Exception as e:
                         print(f"   (回读校验跳过: {str(e)[:60]})")
+                        opened[-1]["actual_margin_mode"] = "unverified"
                 else:
                     print(f"   ❌ {ccxt_sym} 下单失败: {order}")
 
@@ -364,6 +369,11 @@ def cmd_open(wait_second=None):
         log_entry = {
             "ts": int(time.time() * 1000),
             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "config": {
+                "margin_mode": MARGIN_MODE,
+                "leverage": LEVERAGE,
+                "amount_usdt": SINGLE_AMOUNT,
+            },
             "candidates_count": len(candidates),
             "opened": opened,
             "skipped": skipped,
@@ -375,9 +385,11 @@ def cmd_open(wait_second=None):
 
         # TG 通知
         if opened:
-            msg = f"🚀 开仓 {len(opened)} 个:\n"
+            msg = f"🚀 开仓 {len(opened)} 个 ({MARGIN_MODE}, {LEVERAGE}x):\n"
             for o in opened:
-                msg += f"• {o['symbol']} {o['side']} {o['qty']:.4f}张 @ {o['price']:.4f}\n"
+                mm_tag = o.get("margin_mode_confirmed")
+                tag = "✅全仓" if (mm_tag and MARGIN_MODE=="crossed") else ("⚠️" + str(o.get("actual_margin_mode","?")))
+                msg += f"• {o['symbol']} {o['side']} {o['qty']:.4f}张 @ {o['price']:.6f} [{tag}]\n"
             msg += f"  (保证金 {SINGLE_AMOUNT}U × {LEVERAGE}x {MARGIN_MODE})"
             tg_send(msg)
         if skipped:
