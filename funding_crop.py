@@ -317,17 +317,15 @@ def cmd_open(wait_second=None):
                     print(f"   ❌ {ccxt_sym} 成交额 {notional_check:.2f}U 低于最低 {min_usdt}U")
                     continue
 
-                # ccxt 下单 + 附带止损（marginMode 在参数里强制全仓/逐仓，不依赖 set_margin_mode）
+                # ── 下单（先不带止损；止损放到“确认全仓”之后，避免给非全仓仓挂止损） ──
                 sl_price = price * 0.2 if cand["side"] == "long" else price * 1.8
                 order = ex.create_order(ccxt_sym, "market", side, float(qty), None, {
                     "marginMode": MARGIN_MODE,
                     "productType": "USDT-FUTURES",
-                    "stopLoss": {"triggerPrice": round(sl_price, 6)},
                 })
                 if order and order.get("id"):
                     order_id = order["id"]
                     print(f"   ✅ {ccxt_sym} {side} {qty}张 @ {price} (保证金 {amount_usdt}U × {LEVERAGE}x {MARGIN_MODE}) orderId={order_id}")
-                    print(f"   🛡️ 止损 @ {sl_price:.6f}")
 
                     opened.append({
                         "symbol": ccxt_sym,
@@ -341,11 +339,10 @@ def cmd_open(wait_second=None):
                         "margin_mode_confirmed": False,
                     })
 
-                    # ── 强制补切全仓 + 回读确认（关键：Bitget 下单不认 marginMode 参数，
-                    #    新开仓默认/保持 isolated，必须在下单后显式 set_margin_mode 切回 crossed） ──
+                    # ── 第1步：强制补切全仓（关键：Bitget 下单不认 marginMode 参数，
+                    #    新开仓默认/保持 isolated，必须下单后显式 set_margin_mode 切回 crossed） ──
                     try:
                         time.sleep(1.0)
-                        # 1) 先强制切回全仓（已验证对持仓币可成功切换）
                         try:
                             set_r = ex.set_margin_mode(MARGIN_MODE, ccxt_sym)
                             data_mm = (set_r.get("data") or {}).get("marginMode") if isinstance(set_r, dict) else None
@@ -353,22 +350,45 @@ def cmd_open(wait_second=None):
                         except Exception as se:
                             print(f"   ⚠️ {ccxt_sym} 补切全仓失败,尝试回读: {str(se)[:80]}")
                             time.sleep(1.0)
-                        # 2) 回读确认最终仓位模式
+                    except Exception as e:
+                        print(f"   (补切异常: {str(e)[:60]})")
+
+                    # ── 第2步：回读确认最终仓位模式 ──
+                    actual_mm = "unverified"
+                    margin_ok = False
+                    try:
                         chk = ex.fetch_positions([ccxt_sym])
                         for cp in chk:
                             if cp.get("contracts") and float(cp["contracts"]) > 0:
                                 actual_mm = cp.get("marginMode") or "unknown"
-                                if actual_mm != MARGIN_MODE:
-                                    print(f"   ⚠️ {ccxt_sym} 仓位模式={actual_mm}，期望={MARGIN_MODE}！")
-                                    tg_send(f"⚠️ {ccxt_sym} 开仓后仍为{actual_mm}，非{MARGIN_MODE}！请人工检查")
-                                else:
-                                    print(f"   ✅ {ccxt_sym} 仓位模式已确认={actual_mm}")
+                                margin_ok = (actual_mm == MARGIN_MODE)
+                                if margin_ok:
+                                    print(f"   ✅ {ccxt_sym} 仓位模式已确认={actual_mm} (全仓) ")
                                     opened[-1]["margin_mode_confirmed"] = True
+                                else:
+                                    print(f"   ⚠️ {ccxt_sym} 仓位模式={actual_mm}，期望={MARGIN_MODE}！")
                                 opened[-1]["actual_margin_mode"] = actual_mm
                                 break
                     except Exception as e:
-                        print(f"   (补切/回读校验跳过: {str(e)[:60]})")
-                        opened[-1]["actual_margin_mode"] = "unverified"
+                        print(f"   (回读校验异常: {str(e)[:60]})")
+
+                    # ── 第3步：只有确认是全仓才设置止损；非全仓则不设止损并告警 ──
+                    if margin_ok:
+                        try:
+                            sl_order = ex.create_order(ccxt_sym, "market", side, float(qty), None, {
+                                "marginMode": MARGIN_MODE,
+                                "productType": "USDT-FUTURES",
+                                "reduceOnly": True,
+                                "stopLoss": {"triggerPrice": round(sl_price, 6)},
+                            })
+                            print(f"   🛡️ {ccxt_sym} 止损已设置 @ {sl_price:.6f} (仓位为全仓)")
+                            tg_send(f"🛡️ {ccxt_sym} 已开全仓单，止损 @ {sl_price:.6f}")
+                        except Exception as se:
+                            print(f"   ⚠️ {ccxt_sym} 设置止损失败: {str(se)[:80]}")
+                            tg_send(f"⚠️ {ccxt_sym} 全仓已确认，但止损设置失败: {str(se)[:60]}")
+                    else:
+                        print(f"   ❌ {ccxt_sym} 非全仓({actual_mm})，跳过了止损设置！")
+                        tg_send(f"❌ {ccxt_sym} 仓位为{actual_mm}(非全仓)，未设置止损，请人工处理")
                 else:
                     print(f"   ❌ {ccxt_sym} 下单失败: {order}")
 
