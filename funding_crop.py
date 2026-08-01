@@ -376,17 +376,50 @@ def cmd_open(wait_second=None):
 
                     # ── 第3步：只有确认是全仓才设置止损；非全仓则不设止损并告警 ──
                     if margin_ok:
+                        # ── 止损挂单（重要）：必须用 create_trigger_order 挂“计划单 reduceOnly”，
+                        #    不要用 create_order(stopLoss=...) —— 后者走 PlaceTpslOrder 端点，
+                        #    对新开仓会报 22002 "No position to close"，导致止损永远挂不上。
+                        #    正确做法：反向 reduce 单（多仓 sell / 空仓 buy）+ triggerPrice，
+                        #    触发价按合约 pricePlace 精度 floor 舍入，否则报 checkBDScale error。
                         try:
-                            sl_order = ex.create_order(ccxt_sym, "market", side, float(qty), None, {
-                                "marginMode": MARGIN_MODE,
-                                "productType": "USDT-FUTURES",
-                                "reduceOnly": True,
-                                "stopLoss": {"triggerPrice": round(sl_price, 6)},
-                            })
-                            print(f"   🛡️ {ccxt_sym} 止损已设置 @ {sl_price:.6f} (仓位为全仓)")
-                            tg_send(f"🛡️ {ccxt_sym} 已开全仓单，止损 @ {sl_price:.6f}")
+                            reduce_side = "sell" if side == "long" else "buy"   # 平仓方向（反向）
+                            pp = int((market.get("info") or {}).get("pricePlace", "6"))
+                            sl_price_r = math.floor(sl_price * (10 ** pp)) / (10 ** pp)
+                            sl_order = ex.create_trigger_order(
+                                ccxt_sym, "market", reduce_side, float(qty), None, sl_price_r, {
+                                    "marginMode": MARGIN_MODE,
+                                    "productType": "USDT-FUTURES",
+                                    "reduceOnly": True,
+                                }
+                            )
+                            sl_ok = bool(sl_order and sl_order.get("id"))
+                            # 回读确认止损计划单真的挂上了
+                            sl_verified = False
+                            try:
+                                ex.load_markets()
+                                sid = (ex.market(ccxt_sym) or {}).get("id")
+                                pr = ex.private_mix_get_v2_mix_order_orders_plan_pending({
+                                    "productType": "USDT-FUTURES", "symbol": sid, "planType": "normal_plan"
+                                })
+                                plan_list = (pr.get("data") or {}).get("entrustedList", [])
+                                sl_verified = any(
+                                    str(x.get("side")) == reduce_side
+                                    and abs(float(x.get("triggerPrice", 0)) - sl_price_r) < 1e-8
+                                    for x in plan_list
+                                )
+                            except Exception as ve:
+                                print(f"   (止损回读校验异常: {str(ve)[:60]})")
+                            if sl_ok and sl_verified:
+                                print(f"   🛡️ {ccxt_sym} 止损已设置并确认 @ {sl_price_r} (反向reduce下单，仓位全仓)")
+                                tg_send(f"🛡️ {ccxt_sym} 已开全仓单，止损 @ {sl_price_r}")
+                            elif sl_ok:
+                                print(f"   🛡️ {ccxt_sym} 止损已下单 @ {sl_price_r}，但回读未确认(需人工核) ✓")
+                                tg_send(f"⚠️ {ccxt_sym} 止损已下单@{sl_price_r} 但回读未确认，请人工核")
+                            else:
+                                print(f"   ⚠️ {ccxt_sym} 止损下单返回异常: {sl_order}")
+                                tg_send(f"⚠️ {ccxt_sym} 止损下单返回异常，请人工处理")
                         except Exception as se:
-                            print(f"   ⚠️ {ccxt_sym} 设置止损失败: {str(se)[:80]}")
+                            print(f"   ⚠️ {ccxt_sym} 设置止损失败: {str(se)[:100]}")
                             tg_send(f"⚠️ {ccxt_sym} 全仓已确认，但止损设置失败: {str(se)[:60]}")
                     else:
                         print(f"   ❌ {ccxt_sym} 非全仓({actual_mm})，跳过了止损设置！")
