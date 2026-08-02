@@ -46,6 +46,46 @@ def get_exchange():
         "enableRateLimit": True,
     })
 
+# ─── 撤销某币种的计划委托(止损) ──────────────────────────────────
+def cancel_symbol_plan_orders(ex, ccxt_sym):
+    """平仓后顺带撤销该币种遗留的止损计划委托单(normal_plan)，避免触发反向裸单。"""
+    try:
+        if not ex.markets:
+            ex.load_markets()
+        market = ex.market(ccxt_sym)
+        symbol_id = market.get("id")
+        if not symbol_id:
+            return 0
+        # 查该币种待触发的计划单
+        pr = ex.private_mix_get_v2_mix_order_orders_plan_pending({
+            "productType": "USDT-FUTURES",
+            "symbol": symbol_id,
+            "planType": "normal_plan",
+        })
+        lst = (pr.get("data") or {}).get("entrustedList") or []
+        n = 0
+        for o in lst:
+            oid = o.get("orderId")
+            if not oid:
+                continue
+            try:
+                ex.private_mix_post_v2_mix_order_cancel_plan_order({
+                    "productType": "USDT-FUTURES",
+                    "symbol": symbol_id,
+                    "orderId": oid,
+                    "planType": "normal_plan",
+                })
+                n += 1
+            except Exception as e:
+                print(f"   ⚠️ {ccxt_sym} 撤销止损计划单失败 {oid}: {str(e)[:70]}")
+        if n:
+            print(f"   🧹 {ccxt_sym} 已撤销 {n} 个遗留止损计划单")
+        return n
+    except Exception as e:
+        print(f"   ⚠️ {ccxt_sym} 清理计划单异常: {str(e)[:70]}")
+        return 0
+
+
 # ─── 核心追踪 ──────────────────────────────────────────────────────
 def check_and_close():
     ex = get_exchange()
@@ -123,6 +163,8 @@ def check_and_close():
             if order and order.get("id"):
                 closed.append(d["symbol"])
                 print(f"   ✅ 平仓 {d['symbol']} 浮盈 {d['pnl']:.4f}U")
+                # 关键修复：平仓后顺带撤销该币种遗留的止损计划委托单
+                cancel_symbol_plan_orders(ex, d["symbol"])
             else:
                 print(f"   ❌ {d['symbol']} 平仓失败: {order}")
         except Exception as e:
