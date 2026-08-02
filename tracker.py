@@ -148,12 +148,22 @@ def check_and_close():
     # TG
     profit_entries = [d for d in details if d['pnl'] > 0]
     loss_entries = [d for d in details if d['pnl'] <= 0]
+    profit_sum = sum(d['pnl'] for d in profit_entries)
+    loss_sum = sum(d['pnl'] for d in loss_entries)
+
     msg = f"🏁 止盈平仓!\n"
-    msg += f"净浮盈 {net_pnl:.4f}U / 阈值 {threshold:.4f}U\n"
-    msg += f"盈利仓: {sum(d['pnl'] for d in profit_entries):.4f}U | 亏损仓: {sum(d['pnl'] for d in loss_entries):.4f}U\n"
+    msg += f"━━📊 汇总金额━━\n"
+    msg += f"✅ 盈利仓合计: +{profit_sum:.4f}U ({len(profit_entries)}仓)\n"
+    msg += f"❌ 亏损仓合计: {loss_sum:.4f}U ({len(loss_entries)}仓)\n"
+    msg += f"💰 止盈净落袋: <b>{net_pnl:+.4f}U</b> (含手续费 {total_fee_base:.4f}U)\n"
+    msg += f"🎯 触发阈值: {threshold:.4f}U\n"
+    msg += f"─────────────\n"
     for d in details:
         pnl_str = f"+{d['pnl']:.4f}" if d['pnl'] > 0 else f"{d['pnl']:.4f}"
         msg += f"• {d['symbol']} {d['side']} {pnl_str}U\n"
+    msg += f"─────────────\n"
+    msg += f"🧾 合计: <b>{net_pnl:+.4f}U</b>\n"
+    msg += f"💵 预计到账(扣手续费后): {net_pnl - total_fee_base:+.4f}U"
     tg_send(msg)
 
 # ─── 主循环 ────────────────────────────────────────────────────────
