@@ -426,7 +426,7 @@ def cmd_open(wait_second=None):
                         #    正确做法：反向 reduce 单（多仓 sell / 空仓 buy）+ triggerPrice，
                         #    触发价按合约 pricePlace 精度 floor 舍入，否则报 checkBDScale error。
                         try:
-                            reduce_side = "sell" if side == "long" else "buy"   # 平仓方向（反向）
+                            reduce_side = "sell" if cand["side"] == "long" else "buy"   # 平仓方向（反向）：多仓→sell 空仓→buy
                             pp = int((market.get("info") or {}).get("pricePlace", "6"))
                             sl_price_r = math.floor(sl_price * (10 ** pp)) / (10 ** pp)
                             sl_order = ex.create_trigger_order(
