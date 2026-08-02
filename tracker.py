@@ -163,7 +163,20 @@ def check_and_close():
         msg += f"• {d['symbol']} {d['side']} {pnl_str}U\n"
     msg += f"─────────────\n"
     msg += f"🧾 合计: <b>{net_pnl:+.4f}U</b>\n"
-    msg += f"💵 预计到账(扣手续费后): {net_pnl - total_fee_base:+.4f}U"
+    msg += f"💵 预计到账(扣手续费后): {net_pnl - total_fee_base:+.4f}U\n"
+    msg += f"─────────────\n"
+    # 平仓后实时拉取合约账户余额（USDT 全仓账户权益）
+    try:
+        bal = ex.fetch_balance({"type": "swap"})
+        u = bal.get("USDT") or {}
+        con_total = float(u.get("total") or 0)
+        con_free = float(u.get("free") or 0)
+        con_used = float(u.get("used") or 0)
+        msg += f"💰 合约账户实时余额: <b>{con_total:.4f}U</b>\n"
+        msg += f"   └ 可用 {con_free:.4f}U | 占用保证金 {con_used:.4f}U\n"
+    except Exception as be:
+        print(f"[TRACKER] 拉合约余额异常: {str(be)[:100]}")
+        msg += f"💰 合约账户实时余额: 查询失败\n"
     tg_send(msg)
 
 # ─── 主循环 ────────────────────────────────────────────────────────
