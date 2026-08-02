@@ -80,6 +80,40 @@ def bitget_v2_get(path: str, method: str = "GET", body: str = "") -> dict:
         r = requests.post(url, headers=hdrs, data=body, timeout=15)
     return r.json()
 
+# ─── 带单限制币黑名单（自学习） ────────────────────────────────
+def load_copy_blacklist() -> set:
+    """读取带单限制币黑名单(base 币大写，如 SYN/HYPER)"""
+    try:
+        if os.path.exists(COPY_TRADE_BLACKLIST_FILE):
+            with open(COPY_TRADE_BLACKLIST_FILE) as f:
+                data = json.load(f)
+            return set(data.get("symbols", []))
+    except Exception as e:
+        print(f"(读取黑名单异常: {e})")
+    return set()
+
+
+def save_copy_blacklist(syms: set):
+    """持久化带单限制币黑名单"""
+    try:
+        with open(COPY_TRADE_BLACKLIST_FILE, "w") as f:
+            json.dump({"updated": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "symbols": sorted(syms)}, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        print(f"(写入黑名单异常: {e})")
+
+
+def is_copy_trade_error(e) -> bool:
+    """判断异常是否为带单交易限制（code 40020 / 40731，或文案含 copy trading）"""
+    s = str(e)
+    if "copy trading" in s.lower() or "copy-trade" in s.lower():
+        return True
+    # ccxt/bitget 错误可能带 code
+    for code in ("40020", "40731"):
+        if code in s:
+            return True
+    return False
+
+
 # ─── 阶段一：扫描 ──────────────────────────────────────────────────
 def cmd_scan(wait_second=55):
     print(f"[SCAN] 开始扫描，等待到 {wait_second} 秒…")
@@ -106,6 +140,11 @@ def cmd_scan(wait_second=55):
         now_epoch = int(now_utc.timestamp() * 1000)
         candidates = []
 
+        # 带单限制币黑名单（自学习：开仓被拒过的币自动跳过）
+        copy_black = load_copy_blacklist()
+        if copy_black:
+            print(f"[SCAN] 带单限制黑名单 {len(copy_black)} 个: {sorted(copy_black)}")
+
         for t in tickers_raw.get("data", []):
             sym = t.get("symbol", "")
             # 排除
@@ -115,6 +154,11 @@ def cmd_scan(wait_second=55):
                     skip = True
                     break
             if skip:
+                continue
+
+            # 带单限制币：跳过
+            base = sym[:-4] if sym.upper().endswith("USDT") else sym
+            if base.upper() in copy_black:
                 continue
 
             rate_str = t.get("fundingRate", "0")
@@ -429,6 +473,17 @@ def cmd_open(wait_second=None):
 
             except Exception as e:
                 print(f"   ❌ {ccxt_sym} 开仓异常: {e}")
+                # 带单限制币：自动加入黑名单，后续扫描跳过（避免每整点白跑）
+                if is_copy_trade_error(e):
+                    base_b = base.upper()
+                    black = load_copy_blacklist()
+                    if base_b not in black:
+                        black.add(base_b)
+                        save_copy_blacklist(black)
+                        print(f"   🚫 {ccxt_sym} 带单限制币，已加入黑名单: {base_b}")
+                        tg_send(f"🚫 {ccxt_sym} 带单限制币，已自动加入跳过黑名单")
+                else:
+                    tg_send(f"⚠️ {ccxt_sym} 开仓异常: {str(e)[:80]}")
 
         # 日志
         log_entry = {
