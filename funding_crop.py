@@ -410,23 +410,32 @@ def cmd_open(wait_second=None):
                         print(f"   (补切异常: {str(e)[:60]})")
 
                     # ── 第2步:回读确认最终仓位模式 ──
+                    # 注意:新开仓后交易所撮合/仓位同步有延迟,单次 fetch_positions 可能读不到该仓
+                    # (返回空→被误判 unverified→跳过止损,造成仓位裸奔无止损)。
+                    # 故这里必须重试多次,直到确认仓位的 marginMode 再决定是否挂止损。
                     actual_mm = "unverified"
                     margin_ok = False
                     try:
-                        chk = ex.fetch_positions([ccxt_sym])
-                        for cp in chk:
-                            if cp.get("contracts") and float(cp["contracts"]) > 0:
-                                actual_mm = cp.get("marginMode") or "unknown"
-                                # Bitget/ccxt 可能返回 cross 或 crossed,都归一化为 crossed 比较
-                                norm_actual = "crossed" if str(actual_mm).lower() in ("cross", "crossed") else str(actual_mm).lower()
-                                margin_ok = (norm_actual == MARGIN_MODE)
-                                if margin_ok:
-                                    print(f"   ✅ {ccxt_sym} 仓位模式已确认={actual_mm} (全仓) ")
-                                    opened[-1]["margin_mode_confirmed"] = True
-                                else:
-                                    print(f"   ⚠️ {ccxt_sym} 仓位模式={actual_mm},期望={MARGIN_MODE}!")
-                                opened[-1]["actual_margin_mode"] = actual_mm
-                                break
+                        for mm_retry in range(6):
+                            chk = ex.fetch_positions([ccxt_sym])
+                            for cp in chk:
+                                if cp.get("contracts") and float(cp["contracts"]) > 0:
+                                    actual_mm = cp.get("marginMode") or "unknown"
+                                    # Bitget/ccxt 可能返回 cross 或 crossed,都归一化为 crossed 比较
+                                    norm_actual = "crossed" if str(actual_mm).lower() in ("cross", "crossed") else str(actual_mm).lower()
+                                    margin_ok = (norm_actual == MARGIN_MODE)
+                                    opened[-1]["actual_margin_mode"] = actual_mm
+                                    if margin_ok:
+                                        print(f"   ✅ {ccxt_sym} 仓位模式已确认={actual_mm} (全仓) ")
+                                        opened[-1]["margin_mode_confirmed"] = True
+                                    else:
+                                        print(f"   ⚠️ {ccxt_sym} 仓位模式={actual_mm},期望={MARGIN_MODE}!")
+                                    break
+                            if margin_ok or len(chk) > 0:
+                                break  # 已确认到该仓(无论是否全仓),不必再等
+                            # 该仓还没出现在持仓里(可能是同步延迟),等一会重试
+                            print(f"   ⏳ {ccxt_sym} 回读暂未读到该仓,等待重试({mm_retry+1}/6)...")
+                            time.sleep(1.0)
                     except Exception as e:
                         print(f"   (回读校验异常: {str(e)[:60]})")
 
