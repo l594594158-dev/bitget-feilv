@@ -115,7 +115,7 @@ def is_copy_trade_error(e) -> bool:
 
 
 # ─── 阶段一:扫描 ──────────────────────────────────────────────────
-def cmd_scan(wait_second=55):
+def cmd_scan(wait_second=50):
     print(f"[SCAN] 开始扫描,等待到 {wait_second} 秒...")
     wait_until_second(wait_second)
 
@@ -184,7 +184,8 @@ def cmd_scan(wait_second=55):
             if countdown_ms > SETTLE_WINDOW * 1000 or countdown_ms < -2000:
                 continue
 
-            side = "long" if rate > 0 else "short"
+            # 开仓方向：正费率→做空(收资金费)  负费率→做多(收资金费)
+            side = "short" if rate > 0 else "long"
             candidates.append({
                 "symbol": sym,
                 "rate": rate,
@@ -577,17 +578,14 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.action == "scan":
-        wait_sec = args.wait_until_second if args.wait_until_second is not None else 55
+        wait_sec = args.wait_until_second if args.wait_until_second is not None else 50
         cmd_scan(wait_second=wait_sec)
         if args.auto_open:
-            # 直接在脚本内等整点,省去 crontab sleep+第二个进程启动开销
-            # 给 1s 余量:候选文件已就绪,等 2 秒进下一分钟整点
-            now = datetime.now()
-            target = now.replace(second=2, microsecond=0) + timedelta(minutes=1)
-            delta = (target - datetime.now()).total_seconds()
-            if 0 < delta <= 70:
-                print(f"[AUTO-OPEN] 等待 {delta:.1f}s 到 {target.strftime('%H:%M:%S')} 执行开仓...")
-                time.sleep(delta)
-            cmd_open(wait_second=None)
+            # 满足条件后直接开仓,不再等待整点+2s
+            if os.path.exists(CANDIDATES_FILE):
+                print("[AUTO-OPEN] 有候选,满足条件直接开仓...")
+                cmd_open(wait_second=None)
+            else:
+                print("[AUTO-OPEN] 无候选文件,跳过")
     elif args.action == "open":
         cmd_open(wait_second=None)
