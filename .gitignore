@@ -5,3 +5,4 @@ logs/
 funding_candidates.json
 .Git/
 logs/
+trailing_state.json
