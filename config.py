@@ -22,6 +22,13 @@ CLOSE_FEE_RATE = 0.0005    # 平仓手续费 0.05%
 TOTAL_FEE_RATE = 0.001     # 合并 0.1%
 PROFIT_MULTIPLIER = 5      # 浮盈倍数阈值
 
+# === 移动止盈（每仓独立, 回撤止损）===
+# 多单涨幅 / 空单跌幅 达到激活阈值后, 开始跟踪最高/最低价;
+# 激活后从最高(多)/最低(空)位回撤超过回撤阈值 → 市价平该仓。
+TRAILING_ACTIVATE_PCT = 0.05   # 涨跌幅≥5% 激活移动止盈
+TRAILING_DRAWDOWN_PCT = 0.02   # 激活后从极值回撤 ≥2% 平仓
+TRAILING_STATE_FILE = os.path.join(os.path.dirname(__file__), "trailing_state.json")  # 状态持久化(重启不丢)
+
 CANDIDATES_FILE = os.path.join(os.path.dirname(__file__), "funding_candidates.json")
 LOG_DIR = os.path.join(os.path.dirname(__file__), "logs")
 

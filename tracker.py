@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-tracker.py — 资金费率反弹策略：持仓追踪平仓
+tracker.py — 罗海资金费率收割：持仓追踪平仓
 
 每 5 秒拉一次持仓，检查总浮盈是否超过阈值，达标则全平。
 
@@ -86,6 +86,113 @@ def cancel_symbol_plan_orders(ex, ccxt_sym):
         return 0
 
 
+# ─── 移动止盈状态(持久化) ────────────────────────────────────────
+def load_trailing_state():
+    """读取移动止盈状态文件, 返回 {symbol: {activated, extreme_price}}。"""
+    if os.path.exists(TRAILING_STATE_FILE):
+        try:
+            with open(TRAILING_STATE_FILE) as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"[TRAIL] 读取状态文件异常: {str(e)[:60]}")
+    return {}
+
+
+def save_trailing_state(state):
+    """持久化移动止盈状态(重启不丢)。"""
+    try:
+        with open(TRAILING_STATE_FILE, "w") as f:
+            json.dump(state, f, indent=2)
+    except Exception as e:
+        print(f"[TRAIL] 写入状态文件异常: {str(e)[:60]}")
+
+
+def check_trailing_stop(ex, positions):
+    """每仓独立移动止盈: 涨跌幅激活后跟踪极值, 回撤超阈值则市价平该仓。
+    与总浮盈全平完全独立, 互不冲突。返回平掉的仓列表。"""
+    state = load_trailing_state()
+    closed = []
+    try:
+        # 一次批量拉全市场最新价(覆盖所有持仓, 1次API)
+        tickers = ex.fetch_tickers()
+    except Exception as e:
+        print(f"[TRAIL] 拉tickers异常: {str(e)[:60]}, 本轮跳过移动止盈")
+        return []
+
+    has = [p for p in positions if p.get("contracts") and float(p["contracts"]) > 0]
+    now = datetime.now().strftime("%H:%M:%S")
+
+    for p in has:
+        sym = p["symbol"]
+        side = p.get("side")   # long/short
+        entry = float(p.get("entryPrice") or 0)
+        contracts = float(p.get("contracts") or 0)
+        if entry <= 0 or contracts <= 0:
+            continue
+        tk = tickers.get(sym)
+        if not tk:
+            continue
+        last = float(tk.get("last") or 0)
+        if last <= 0:
+            continue
+
+        # 涨跌幅: 多单 = (现价/开仓 -1), 空单 = (开仓/现价 -1)
+        move_pct = (last / entry - 1) if side == "long" else (entry / last - 1)
+
+        st = state.get(sym, {"activated": False, "extreme_price": (last if side == "long" else last)})
+
+        # 未激活: 涨跌幅≥激活阈值则激活, 并锁定当前价为极值起点
+        if not st.get("activated"):
+            if move_pct >= TRAILING_ACTIVATE_PCT:
+                st["activated"] = True
+                st["extreme_price"] = last  # 激活起点即当前极值
+                state[sym] = st
+                print(f"[TRAIL] {now} 🎯 {sym} {side} 激活移动止盈 (涨跌{move_pct*100:.2f}%≥{TRAILING_ACTIVATE_PCT*100:.0f}%), 起始极值={last}")
+            continue
+
+        # 已激活: 更新极值(多单看最高价, 空单看最低价)
+        update_extreme = False
+        if side == "long" and last > st["extreme_price"]:
+            st["extreme_price"] = last
+            update_extreme = True
+        elif side == "short" and last < st["extreme_price"]:
+            st["extreme_price"] = last
+            update_extreme = True
+
+        # 回撤判定: 多单从最高回撤, 空单从最低反抽
+        if side == "long":
+            drawdown = (st["extreme_price"] - last) / st["extreme_price"]
+        else:
+            drawdown = (last - st["extreme_price"]) / st["extreme_price"]
+
+        if drawdown >= TRAILING_DRAWDOWN_PCT:
+            # 触发移动止盈平仓
+            print(f"[TRAIL] {now} 🎯 {sym} {side} 回撤{drawdown*100:.2f}%≥{TRAILING_DRAWDOWN_PCT*100:.0f}%, 市价平仓")
+            try:
+                close_side = "sell" if side == "long" else "buy"
+                o = ex.create_order(sym, "market", close_side, float(contracts), None, {
+                    "reduceOnly": True, "marginMode": "crossed", "productType": "USDT-FUTURES"})
+                if o and o.get("id"):
+                    closed.append(sym)
+                    print(f"   ✅ 移动止盈平仓 {sym} 浮盈={float(p.get('unrealizedPnl') or 0):.4f}U")
+                    cancel_symbol_plan_orders(ex, sym)
+                    state.pop(sym, None)  # 清状态
+                    try:
+                        tg_send(f"🎯 移动止盈平仓 {sym} ({side}) {float(p.get('unrealizedPnl') or 0):+.4f}U")
+                    except Exception:
+                        pass
+                else:
+                    print(f"   ❌ {sym} 移动止盈平仓失败: {o}")
+            except Exception as e:
+                print(f"   ❌ {sym} 移动止盈平仓异常: {str(e)[:80]}")
+        elif update_extreme:
+            # 价格创新高/新低, 状态更新
+            state[sym] = st
+
+    save_trailing_state(state)
+    return closed
+
+
 # ─── 核心追踪 ──────────────────────────────────────────────────────
 def check_and_close():
     ex = get_exchange()
@@ -95,7 +202,20 @@ def check_and_close():
 
     if not has_positions:
         print(f"[TRACKER] {datetime.now().strftime('%H:%M:%S')} 无持仓")
+        # 状态文件里没有持仓的币可能要清? 暂不处理, 保持简单
         return  # 没持仓就睡
+
+    # ---- 每仓独立移动止盈(与总浮盈全平互不冲突, 共享本次持仓+1次行情拉取) ----
+    try:
+        trailing_closed = check_trailing_stop(ex, has_positions)
+        if trailing_closed:
+            # 移动止盈已平的仓, 从本次总浮盈判定中剔除(避免重复操作)
+            has_positions = [p for p in has_positions if p["symbol"] not in trailing_closed]
+            if not has_positions:
+                print(f"[TRACKER] {datetime.now().strftime('%H:%M:%S')} 移动止盈已全平, 本轮跳过总浮盈判定")
+                return
+    except Exception as te:
+        print(f"[TRAIL ERROR] {te}")
 
     # 计算总浮盈和总浮亏
     total_profit = 0.0   # 正浮盈总和
