@@ -115,7 +115,7 @@ def is_copy_trade_error(e) -> bool:
 
 
 # ─── 阶段一:扫描 ──────────────────────────────────────────────────
-def cmd_scan(wait_second=50):
+def cmd_scan(wait_second=40):
     print(f"[SCAN] 开始扫描,等待到 {wait_second} 秒...")
     wait_until_second(wait_second)
 
@@ -578,7 +578,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.action == "scan":
-        wait_sec = args.wait_until_second if args.wait_until_second is not None else 50
+        wait_sec = args.wait_until_second if args.wait_until_second is not None else 40
         cmd_scan(wait_second=wait_sec)
         if args.auto_open:
             # 满足条件后直接开仓,不再等待整点+2s
