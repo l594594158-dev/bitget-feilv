@@ -509,6 +509,48 @@ def cmd_open(wait_second=None):
                         except Exception as se:
                             print(f"   ⚠️ {ccxt_sym} 设置止损失败: {str(se)[:100]}")
                             tg_send(f"⚠️ {ccxt_sym} 全仓已确认,但止损设置失败: {str(se)[:60]}")
+
+                        # ── 止盈挂单（20%）：跟止损一样用 create_trigger_order 挂 reduceOnly 计划单 ──
+                        #    多仓 TP=开仓x1.2(+20%)→sell 平  空仓 TP=开仓x0.8(-20%)→buy 平
+                        #    方向与止损相同(reduce_side 反向平仓),仅触发价不同。
+                        try:
+                            tp_price = price * 1.2 if cand["side"] == "long" else price * 0.8
+                            tp_price_r = math.floor(tp_price * (10 ** pp)) / (10 ** pp)
+                            tp_order = ex.create_trigger_order(
+                                ccxt_sym, "market", reduce_side, float(qty), None, tp_price_r, {
+                                    "marginMode": MARGIN_MODE,
+                                    "productType": "USDT-FUTURES",
+                                    "reduceOnly": True,
+                                }
+                            )
+                            tp_ok = bool(tp_order and tp_order.get("id"))
+                            tp_verified = False
+                            try:
+                                ex.load_markets()
+                                sid = (ex.market(ccxt_sym) or {}).get("id")
+                                pr = ex.private_mix_get_v2_mix_order_orders_plan_pending({
+                                    "productType": "USDT-FUTURES", "symbol": sid, "planType": "normal_plan"
+                                })
+                                plan_list = (pr.get("data") or {}).get("entrustedList", [])
+                                tp_verified = any(
+                                    str(x.get("side")) == reduce_side
+                                    and abs(float(x.get("triggerPrice", 0)) - tp_price_r) < 1e-8
+                                    for x in plan_list
+                                )
+                            except Exception as ve:
+                                print(f"   (止盈回读校验异常: {str(ve)[:60]})")
+                            if tp_ok and tp_verified:
+                                print(f"   🎯 {ccxt_sym} 止盈已设置并确认 @ {tp_price_r} (+20%)")
+                                tg_send(f"🎯 {ccxt_sym} 开仓止盈 @ {tp_price_r}")
+                            elif tp_ok:
+                                print(f"   🎯 {ccxt_sym} 止盈已下单 @ {tp_price_r},但回读未确认(需人工核) ✓")
+                                tg_send(f"⚠️ {ccxt_sym} 止盈已下单@{tp_price_r} 但回读未确认,请人工核")
+                            else:
+                                print(f"   ⚠️ {ccxt_sym} 止盈下单返回异常: {tp_order}")
+                                tg_send(f"⚠️ {ccxt_sym} 止盈下单返回异常,请人工处理")
+                        except Exception as te:
+                            print(f"   ⚠️ {ccxt_sym} 设置止盈失败: {str(te)[:100]}")
+                            tg_send(f"⚠️ {ccxt_sym} 全仓已确认,但止盈设置失败: {str(te)[:60]}")
                     else:
                         print(f"   ❌ {ccxt_sym} 非全仓({actual_mm}),跳过了止损设置!")
                         tg_send(f"❌ {ccxt_sym} 仓位为{actual_mm}(非全仓),未设置止损,请人工处理")
