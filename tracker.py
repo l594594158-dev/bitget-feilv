@@ -174,11 +174,20 @@ def check_trailing_stop(ex, positions):
                     "reduceOnly": True, "marginMode": "crossed", "productType": "USDT-FUTURES"})
                 if o and o.get("id"):
                     closed.append(sym)
-                    print(f"   ✅ 移动止盈平仓 {sym} 浮盈={float(p.get('unrealizedPnl') or 0):.4f}U")
+                    # 用开仓价+实时价自算真实浮盈(空单不再反号)
+                    _rpnl = 0.0
+                    try:
+                        if side == "long":
+                            _rpnl = (last - entry) * contracts
+                        else:
+                            _rpnl = (entry - last) * contracts
+                    except Exception:
+                        _rpnl = float(p.get("unrealizedPnl") or 0)
+                    print(f"   ✅ 移动止盈平仓 {sym} 浮盈={_rpnl:.4f}U")
                     cancel_symbol_plan_orders(ex, sym)
                     state.pop(sym, None)  # 清状态
                     try:
-                        tg_send(f"🎯 移动止盈平仓 {sym} ({side}) {float(p.get('unrealizedPnl') or 0):+.4f}U")
+                        tg_send(f"🎯 移动止盈平仓 {sym} ({side}) {_rpnl:+.4f}U")
                     except Exception:
                         pass
                 else:
@@ -218,19 +227,40 @@ def check_and_close():
         print(f"[TRAIL ERROR] {te}")
 
     # 计算总浮盈和总浮亏
+    # ── 修复(2026-08-06 娜姐发现): 不再盲信 unrealizedPnl, 空单会反号/数值错。
+    #    用 开仓均价 entryPrice + 实时价 last + 方向 自己算真实浮盈。
     total_profit = 0.0   # 正浮盈总和
     total_loss = 0.0     # 负浮亏总和
     total_fee_base = 0.0
     details = []
 
+    try:
+        _tickers = ex.fetch_tickers()
+    except Exception:
+        _tickers = {}
+
     for p in has_positions:
-        pnl = float(p.get("unrealizedPnl", 0) or 0)
         # 保证金从原始 info 的 marginSize 读取（ccxt .margin 可能为空）
         info = p.get("info", {})
         margin = float(info.get("marginSize", "0") or 0)
         lever = float(info.get("leverage", LEVERAGE))
         notional = margin * lever  # 实际成交额 = 保证金 × 杠杆
         fee_cost = notional * TOTAL_FEE_RATE  # 开平仓合并手续费 = 成交额 × 0.1%
+
+        # 自算真实浮盈（USDT本位, 合约张数=币个数; 多(现-开), 空(开-现)）
+        _side = p.get("side")
+        _entry = float(p.get("entryPrice") or 0)
+        _contracts = float(p.get("contracts") or 0)
+        _tk = _tickers.get(p["symbol"]) or {}
+        _last = float(_tk.get("last") or 0)
+        if _side and _entry > 0 and _contracts > 0 and _last > 0:
+            if _side == "long":
+                pnl = (_last - _entry) * _contracts
+            else:  # short
+                pnl = (_entry - _last) * _contracts
+        else:
+            # 取不到实时价则回落 unrealizedPnl（并标注不可靠）
+            pnl = float(p.get("unrealizedPnl", 0) or 0)
         
         if pnl > 0:
             total_profit += pnl
@@ -238,7 +268,7 @@ def check_and_close():
             total_loss += pnl  # 负数
         total_fee_base += fee_cost
 
-        side = "多" if p.get("side") == "long" else "空"
+        side = "多" if _side == "long" else "空"
         details.append({
             "symbol": p["symbol"],
             "pnl": pnl,
