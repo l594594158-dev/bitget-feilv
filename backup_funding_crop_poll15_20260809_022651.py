@@ -164,24 +164,32 @@ def cmd_scan(wait_second=40):
             rate_str = t.get("fundingRate", "0")
             rate = float(rate_str) if rate_str else 0.0
 
-            # 筛选费率绝对值 ≥ 阈值 (每15分钟轮询, 不看结算倒计时)
+            # 只做负费率(收资金费→做多): 正费率/零费率一律过滤不做空
+            if rate >= 0:
+                continue
+
+            # 筛选费率绝对值 ≥ 阈值
             if abs(rate) < FUNDING_THRESHOLD:
                 continue
 
-            # 结算周期 (仅记录用, 不影响开仓)
+            # 结算周期
             contract = contracts_map.get(sym, {})
             interval_h = int(contract.get("fundInterval", 8))
             interval_ms = interval_h * 3600 * 1000
 
-            # 推算下次结算时间戳 (仅记录用, 不在筛选)
+            # 推算下次结算时间戳
             day_start = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
             elapsed_ms = (now_utc - day_start).total_seconds() * 1000
             next_interval_ms = ((elapsed_ms // interval_ms) + 1) * interval_ms
             next_settle_ts = int(day_start.timestamp() * 1000) + int(next_interval_ms)
             countdown_ms = next_settle_ts - now_epoch
 
-            # 开仓方向：正费率→做多, 负费率→做空 (双向反转)
-            side = "long" if rate > 0 else "short"
+            # 筛选:距结算 < 60s
+            if countdown_ms > SETTLE_WINDOW * 1000 or countdown_ms < -2000:
+                continue
+
+            # 开仓方向：只做负费率→做多(收资金费); 正费率已在上方过滤
+            side = "long"
             candidates.append({
                 "symbol": sym,
                 "rate": rate,

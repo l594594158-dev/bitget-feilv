@@ -7,13 +7,13 @@ API_SECRET = os.getenv("BITGET_API_SECRET", "")
 API_PASS = os.getenv("BITGET_API_PASS", "")
 
 # === 策略参数 ===
-SINGLE_AMOUNT = 3          # 单笔开仓保证金 (USDT)
+SINGLE_AMOUNT = 5          # 单笔开仓保证金 (USDT)
 LEVERAGE = 5               # 杠杆倍数
 MARGIN_MODE = "crossed"    # 全仓
 ORDER_TYPE = "market"      # 市价单
 
-FUNDING_THRESHOLD = 0.002   # 费率阈值 (±0.2%)
-# 结算倒计时筛选已取消防（每15分钟轮询, 不看离结算多近, 满足费率即开仓）
+FUNDING_THRESHOLD = 0.0015  # 费率阈值 (±0.15%)
+SETTLE_WINDOW = 60         # 结算剩余秒数筛选 (< 60s)
 
 EXCLUDE_SYMBOLS = ["BTC", "ETH", "BNB"]  # 排除币种
 

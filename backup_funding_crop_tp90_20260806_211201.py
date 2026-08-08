@@ -164,24 +164,28 @@ def cmd_scan(wait_second=40):
             rate_str = t.get("fundingRate", "0")
             rate = float(rate_str) if rate_str else 0.0
 
-            # 筛选费率绝对值 ≥ 阈值 (每15分钟轮询, 不看结算倒计时)
+            # 筛选费率绝对值 ≥ 阈值
             if abs(rate) < FUNDING_THRESHOLD:
                 continue
 
-            # 结算周期 (仅记录用, 不影响开仓)
+            # 结算周期
             contract = contracts_map.get(sym, {})
             interval_h = int(contract.get("fundInterval", 8))
             interval_ms = interval_h * 3600 * 1000
 
-            # 推算下次结算时间戳 (仅记录用, 不在筛选)
+            # 推算下次结算时间戳
             day_start = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
             elapsed_ms = (now_utc - day_start).total_seconds() * 1000
             next_interval_ms = ((elapsed_ms // interval_ms) + 1) * interval_ms
             next_settle_ts = int(day_start.timestamp() * 1000) + int(next_interval_ms)
             countdown_ms = next_settle_ts - now_epoch
 
-            # 开仓方向：正费率→做多, 负费率→做空 (双向反转)
-            side = "long" if rate > 0 else "short"
+            # 筛选:距结算 < 60s
+            if countdown_ms > SETTLE_WINDOW * 1000 or countdown_ms < -2000:
+                continue
+
+            # 开仓方向：正费率→做空(收资金费)  负费率→做多(收资金费)
+            side = "short" if rate > 0 else "long"
             candidates.append({
                 "symbol": sym,
                 "rate": rate,
@@ -503,11 +507,11 @@ def cmd_open(wait_second=None):
                         except Exception as se:
                             print(f"   ⚠️ {ccxt_sym} 设置止损失败: {str(se)[:100]}")
 
-                        # ── 止盈挂单（90%）：跟止损一样用 create_trigger_order 挂 reduceOnly 计划单 ──
-                        #    多仓 TP=开仓x1.9(+90%)→sell 平  空仓 TP=开仓x0.1(-90%)→buy 平
+                        # ── 止盈挂单（20%）：跟止损一样用 create_trigger_order 挂 reduceOnly 计划单 ──
+                        #    多仓 TP=开仓x1.2(+20%)→sell 平  空仓 TP=开仓x0.8(-20%)→buy 平
                         #    方向与止损相同(reduce_side 反向平仓),仅触发价不同。
                         try:
-                            tp_price = price * 1.9 if cand["side"] == "long" else price * 0.1
+                            tp_price = price * 1.2 if cand["side"] == "long" else price * 0.8
                             tp_price_r = math.floor(tp_price * (10 ** pp)) / (10 ** pp)
                             tp_order = ex.create_trigger_order(
                                 ccxt_sym, "market", reduce_side, float(qty), None, tp_price_r, {
@@ -533,7 +537,7 @@ def cmd_open(wait_second=None):
                             except Exception as ve:
                                 print(f"   (止盈回读校验异常: {str(ve)[:60]})")
                             if tp_ok and tp_verified:
-                                print(f"   🎯 {ccxt_sym} 止盈已设置并确认 @ {tp_price_r} (+90%)")
+                                print(f"   🎯 {ccxt_sym} 止盈已设置并确认 @ {tp_price_r} (+20%)")
                             elif tp_ok:
                                 print(f"   🎯 {ccxt_sym} 止盈已下单 @ {tp_price_r},但回读未确认(需人工核) ✓")
                             else:

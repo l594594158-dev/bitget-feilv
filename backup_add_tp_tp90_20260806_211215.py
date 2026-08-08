@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""给当前已持仓仓位补挂 90% 止盈单(reduceOnly, 跟止损对称)。
-  多仓 TP=开仓x1.9/sell平  空仓 TP=开仓x0.1/buy平
+"""给当前已持仓仓位补挂 20% 止盈单(reduceOnly, 跟止损对称)。
+  多仓 TP=开仓x1.2/sell平  空仓 TP=开仓x0.8/buy平
 """
 import load_env, config, ccxt, math, time
 
@@ -25,8 +25,8 @@ for p in op:
     market = ex.market(sym)
     pp = int((market.get("info") or {}).get("pricePlace", "6"))
     reduce_side = "sell" if side == "long" else "buy"
-    # 止盈: 多仓 x1.9, 空仓 x0.1
-    tp = entry * 1.9 if side == "long" else entry * 0.1
+    # 止盈: 多仓 x1.2, 空仓 x0.8
+    tp = entry * 1.2 if side == "long" else entry * 0.8
     tp_r = math.floor(tp * (10 ** pp)) / (10 ** pp)
 
     # 先查该币种是否已有止盈单(避免重复挂)
@@ -60,7 +60,7 @@ for p in op:
         except Exception as ve:
             print(f"  (回读异常: {str(ve)[:40]})")
         if ok and verified:
-            print(f"  ✅ {sym:20s} {side:5s} 止盈已挂并确认 @ {tp_r} (+90%)")
+            print(f"  ✅ {sym:20s} {side:5s} 止盈已挂并确认 @ {tp_r} (+20%)")
             done += 1
         elif ok:
             print(f"  ⚠️ {sym:20s} 止盈已下单 @ {tp_r} 但回读未确认")
