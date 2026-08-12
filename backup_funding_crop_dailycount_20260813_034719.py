@@ -37,32 +37,6 @@ def tg_send(text: str):
     except Exception as e:
         print(f"[TG ERR] {e}")
 
-
-# ─── 今日开仓总量统计(每日00:00按日期自然重置) ────────────────
-def bump_daily_open_count(add: int = 0) -> int:
-    """今日开仓累计入库。
-    读 daily_open_count.json, 若记录的日期不是今天则重置为 0(实现每日00:00自动归零),
-    加上本次 add 后写回, 返回【今日累计开仓总量】。
-    """
-    today = datetime.now().strftime("%Y-%m-%d")
-    cur = 0
-    try:
-        if os.path.exists(DAILY_OPEN_COUNT_FILE):
-            with open(DAILY_OPEN_COUNT_FILE) as f:
-                d = json.load(f)
-            if d.get("date") == today:
-                cur = int(d.get("count", 0))
-            # 日期不同 → 视为跨天, cur 保持 0, 自动重置
-    except Exception as e:
-        print(f"(读今日开仓统计异常: {e})")
-    cur += add
-    try:
-        with open(DAILY_OPEN_COUNT_FILE, "w") as f:
-            json.dump({"date": today, "count": cur}, f)
-    except Exception as e:
-        print(f"(写今日开仓统计异常: {e})")
-    return cur
-
 # ─── 时间对齐 ──────────────────────────────────────────────────────
 def wait_until_second(target_second: int, max_wait=65):
     """阻塞直到当前分钟的 target_second 秒,返回实际等待秒数"""
@@ -610,15 +584,12 @@ def cmd_open(wait_second=None):
 
         # TG 通知
         if opened:
-            # 今日开仓总量统计(本次计入后返回累计值,跨天自动归零)
-            daily_total = bump_daily_open_count(len(opened))
             msg = f"🚀 开仓 {len(opened)} 个 ({MARGIN_MODE}, {LEVERAGE}x):\n"
             for o in opened:
                 mm_tag = o.get("margin_mode_confirmed")
                 tag = "✅全仓" if (mm_tag and MARGIN_MODE=="crossed") else ("⚠️" + str(o.get("actual_margin_mode","?")))
                 msg += f"• {o['symbol']} {o['side']} {o['qty']:.4f}张 @ {o['price']:.6f} [{tag}]\n"
             msg += f"  (保证金 {SINGLE_AMOUNT}U × {LEVERAGE}x {MARGIN_MODE})"
-            msg += f"\n📊 今日开仓总量: {daily_total} 个"
             tg_send(msg)
         if skipped:
             tg_send(f"⏭ 跳过已有持仓: {', '.join(skipped[:5])}{'...' if len(skipped)>5 else ''}")
