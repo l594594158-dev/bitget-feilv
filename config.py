@@ -20,7 +20,7 @@ EXCLUDE_SYMBOLS = ["BTC", "ETH", "BNB"]  # 排除币种
 OPEN_FEE_RATE = 0.0005     # 开仓手续费 0.05%
 CLOSE_FEE_RATE = 0.0005    # 平仓手续费 0.05%
 TOTAL_FEE_RATE = 0.001     # 合并 0.1%
-PROFIT_MULTIPLIER = 5      # 浮盈倍数阈值
+PROFIT_MULTIPLIER = 7      # 浮盈倍数阈值
 
 # === 移动止盈（每仓独立, 回撤止损）===
 # 多单涨幅 / 空单跌幅 达到激活阈值后, 开始跟踪最高/最低价;

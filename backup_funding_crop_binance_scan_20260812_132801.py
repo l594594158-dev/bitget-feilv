@@ -114,28 +114,27 @@ def is_copy_trade_error(e) -> bool:
     return False
 
 
-# ─── 阶段一:扫描(币安费率源 → Bitget 开仓) ────────────────────
+# ─── 阶段一:扫描 ──────────────────────────────────────────────────
 def cmd_scan(wait_second=40):
-    """从【币安】拉资金费率,筛选后才在【Bitget】开仓。
-    币安有但 Bitget 没有合约的币自动跳过。
-    """
-    print(f"[SCAN] 开始扫描(币安费率→Bitget开仓),等待到 {wait_second} 秒...")
+    print(f"[SCAN] 开始扫描,等待到 {wait_second} 秒...")
     wait_until_second(wait_second)
 
     try:
-        # ── 1. 拉币安全部永续资金费率(公开接口,不需密钥) ──
-        b = ccxt.binance({"enableRateLimit": True, "options": {"defaultType": "swap"}})
-        b_funding = b.fetch_funding_rates()
+        ex = get_exchange()
+        # 1. 批量获取所有 ticker(含费率)
+        tickers_raw = bitget_v2_get("/api/v2/mix/market/tickers?productType=USDT-FUTURES")
+        if tickers_raw.get("code") != "00000":
+            raise Exception(f"tickers API 失败: {tickers_raw.get('msg')}")
 
-        # ── 2. 拉 Bitget 合约列表,构建「币安base → Bitget存在」映射 ──
-        g = ccxt.bitget({"enableRateLimit": True, "options": {"defaultType": "swap"}})
-        g_markets = g.load_markets()
-        g_bases = set()
-        for m in g_markets:
-            # m 形如 BTC/USDT:USDT;取 base 大写
-            if m.endswith("/USDT:USDT"):
-                g_bases.add(m.split("/")[0].upper())
-        print(f"[SCAN] Bitget 合约 base 数: {len(g_bases)}")
+        # 2. 批量获取所有合约配置(含 fundInterval)
+        contracts_raw = bitget_v2_get("/api/v2/mix/market/contracts?productType=USDT-FUTURES")
+        if contracts_raw.get("code") != "00000":
+            raise Exception(f"contracts API 失败: {contracts_raw.get('msg')}")
+
+        contracts_map = {}
+        for c in contracts_raw.get("data", []):
+            sym = c.get("symbol", "")
+            contracts_map[sym] = c
 
         now_utc = datetime.now(timezone.utc)
         now_epoch = int(now_utc.timestamp() * 1000)
@@ -146,74 +145,71 @@ def cmd_scan(wait_second=40):
         if copy_black:
             print(f"[SCAN] 带单限制黑名单 {len(copy_black)} 个: {sorted(copy_black)}")
 
-        for sym, d in b_funding.items():
-            if not sym.endswith("/USDT:USDT"):
-                continue
-            base = sym.split("/")[0].upper()
-
-            # 排除 BTC/ETH/BNB
+        for t in tickers_raw.get("data", []):
+            sym = t.get("symbol", "")
+            # 排除
             skip = False
             for ex_sym in EXCLUDE_SYMBOLS:
-                if base.upper().startswith(ex_sym.upper()):
+                if sym.upper().startswith(ex_sym.upper()):
                     skip = True
                     break
             if skip:
                 continue
 
             # 带单限制币:跳过
+            base = sym[:-4] if sym.upper().endswith("USDT") else sym
             if base.upper() in copy_black:
                 continue
 
-            # 币安有但 Bitget 没合约 → 自动跳过
-            if base not in g_bases:
+            rate_str = t.get("fundingRate", "0")
+            rate = float(rate_str) if rate_str else 0.0
+
+            # 筛选费率绝对值 ≥ 阈值 (每15分钟轮询, 不看结算倒计时)
+            if abs(rate) < FUNDING_THRESHOLD:
                 continue
 
-            rate = d.get("fundingRate")
-            if rate is None or abs(rate) < FUNDING_THRESHOLD:
-                continue
+            # 结算周期 (仅记录用, 不影响开仓)
+            contract = contracts_map.get(sym, {})
+            interval_h = int(contract.get("fundInterval", 8))
+            interval_ms = interval_h * 3600 * 1000
 
-            # 结算周期(币安主流 8h,少数 4h;仅记录用,不影响开仓)
-            interval_h = 8
-            ts = d.get("fundingTimestamp")
-            if isinstance(ts, (int, float)) and ts:
-                fund_dt = datetime.fromtimestamp(ts / 1000, tz=timezone.utc)
-            else:
-                fund_dt = now_utc
+            # 推算下次结算时间戳 (仅记录用, 不在筛选)
+            day_start = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
+            elapsed_ms = (now_utc - day_start).total_seconds() * 1000
+            next_interval_ms = ((elapsed_ms // interval_ms) + 1) * interval_ms
+            next_settle_ts = int(day_start.timestamp() * 1000) + int(next_interval_ms)
+            countdown_ms = next_settle_ts - now_epoch
 
             # 开仓方向：正费率→做多, 负费率→做空 (双向反转)
             side = "long" if rate > 0 else "short"
-
-            # 以 Bitget 原生格式存 symbol(去斜杠/冒号),cmd_open 直接用
-            bg_sym = base + "USDT"
             candidates.append({
-                "symbol": bg_sym,
+                "symbol": sym,
                 "rate": rate,
                 "side": side,
                 "interval_h": interval_h,
-                "next_settle_ts": int(ts) if isinstance(ts, (int, float)) and ts else now_epoch,
-                "next_settle_str": fund_dt.strftime("%H:%M:%S UTC"),
-                "countdown_ms": 0,
-                "binance_pair": sym,
+                "next_settle_ts": next_settle_ts,
+                "next_settle_str": datetime.fromtimestamp(next_settle_ts/1000, tz=timezone.utc).strftime("%H:%M:%S UTC"),
+                "countdown_ms": countdown_ms,
             })
 
         # 写入候选文件
         if candidates:
             with open(CANDIDATES_FILE, "w") as f:
                 json.dump({"ts": now_epoch, "candidates": candidates}, f, indent=2)
-            print(f"[SCAN] ✅ {len(candidates)} 个候选,已写入 {CANDIDATES_FILE}(币安费率→Bitget开仓)")
+            print(f"[SCAN] ✅ {len(candidates)} 个候选,已写入 {CANDIDATES_FILE}")
             for c in candidates:
-                print(f"   {c['symbol']:<22} {c['side']:<6} 费率={c['rate']*100:.4f}% ({c['binance_pair']})")
+                print(f"   {c['symbol']:<22} {c['side']:<6} 费率={c['rate']*100:.4f}%  倒计时={c['countdown_ms']/1000:.1f}s  周期={c['interval_h']}h")
             # 也推 TG
-            msg = f"💰 币安费率候选 {len(candidates)} 个(→Bitget开仓):\n"
+            msg = f"💰 费率候选 {len(candidates)} 个:\n"
             for c in candidates:
-                msg += f"• {c['symbol']} {c['side']} {c['rate']*100:.4f}%\n"
+                msg += f"• {c['symbol']} {c['side']} {c['rate']*100:.4f}% ({c['interval_h']}h)\n"
             tg_send(msg)
         else:
             print("[SCAN] ❌ 零候选")
             # 删旧候选
             if os.path.exists(CANDIDATES_FILE):
                 os.remove(CANDIDATES_FILE)
-            tg_send("⚠️ 本轮币安费率扫描无候选")
+            tg_send("⚠️ 本轮费率扫描无候选")
 
     except Exception as e:
         print(f"[SCAN ERROR] {e}")
