@@ -26,7 +26,7 @@ PROFIT_MULTIPLIER = 7      # 浮盈倍数阈值
 # 多单涨幅 / 空单跌幅 达到激活阈值后, 开始跟踪最高/最低价;
 # 激活后从最高(多)/最低(空)位回撤超过回撤阈值 → 市价平该仓。
 TRAILING_ACTIVATE_PCT = 0.05   # 涨跌幅≥5% 激活移动止盈
-TRAILING_DRAWDOWN_PCT = 0.02   # 激活后从极值回撤 ≥2% 平仓
+TRAILING_DRAWDOWN_PCT = 0.01   # 激活后从极值回撤 ≥1% 平仓
 TRAILING_STATE_FILE = os.path.join(os.path.dirname(__file__), "trailing_state.json")  # 状态持久化(重启不丢)
 
 # === 今日开仓总量统计(每日00:00按日期自然重置) ===
