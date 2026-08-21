@@ -401,7 +401,7 @@ def cmd_open(wait_second=None):
                     continue
 
                 # ── 下单(先不带止损;止损放到"确认全仓"之后,避免给非全仓仓挂止损) ──
-                sl_price = price * 0.2 if cand["side"] == "long" else price * 1.8
+                sl_price = price * 0.7 if cand["side"] == "long" else price * 1.3
                 order = ex.create_order(ccxt_sym, "market", side, float(qty), None, {
                     "marginMode": MARGIN_MODE,
                     "productType": "USDT-FUTURES",
