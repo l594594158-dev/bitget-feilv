@@ -29,6 +29,10 @@ TRAILING_ACTIVATE_PCT = 0.05   # 涨跌幅≥5% 激活移动止盈
 TRAILING_DRAWDOWN_PCT = 0.01   # 激活后从极值回撤 ≥1% 平仓
 TRAILING_STATE_FILE = os.path.join(os.path.dirname(__file__), "trailing_state.json")  # 状态持久化(重启不丢)
 
+# === 仓位跟踪轮询间隔(秒) ===
+# tracker 每次拉持仓 + 最新价, 要求每 TRACKER_POLL_SECONDS 秒刷新一次行情。
+TRACKER_POLL_SECONDS = 3
+
 # === 今日开仓总量统计(每日00:00按日期自然重置) ===
 DAILY_OPEN_COUNT_FILE = os.path.join(os.path.dirname(__file__), "daily_open_count.json")  # {"date":"YYYY-MM-DD","count":N}
 

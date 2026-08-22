@@ -107,17 +107,19 @@ def save_trailing_state(state):
         print(f"[TRAIL] 写入状态文件异常: {str(e)[:60]}")
 
 
-def check_trailing_stop(ex, positions):
+def check_trailing_stop(ex, positions, tickers=None):
     """每仓独立移动止盈: 涨跌幅激活后跟踪极值, 回撤超阈值则市价平该仓。
-    与总浮盈全平完全独立, 互不冲突。返回平掉的仓列表。"""
+    与总浮盈全平完全独立, 互不冲突。返回平掉的仓列表。
+    tickers: 可传入本轮已拉好的全市场行情字典(避免重复拉取, 保证3秒轮询)。"""
     state = load_trailing_state()
     closed = []
-    try:
-        # 一次批量拉全市场最新价(覆盖所有持仓, 1次API)
-        tickers = ex.fetch_tickers()
-    except Exception as e:
-        print(f"[TRAIL] 拉tickers异常: {str(e)[:60]}, 本轮跳过移动止盈")
-        return []
+    if tickers is None:
+        try:
+            # 一次批量拉全市场最新价(覆盖所有持仓, 1次API)
+            tickers = ex.fetch_tickers()
+        except Exception as e:
+            print(f"[TRAIL] 拉tickers异常: {str(e)[:60]}, 本轮跳过移动止盈")
+            return []
 
     has = [p for p in positions if p.get("contracts") and float(p["contracts"]) > 0]
     now = datetime.now().strftime("%H:%M:%S")
@@ -207,6 +209,12 @@ def check_and_close():
     ex = get_exchange()
     positions = ex.fetch_positions()
 
+    # ── 每轮只拉一次全市场行情, 供移动止盈 + 总浮盈共用(保证每3秒刷新一次价格) ──
+    try:
+        _tickers = ex.fetch_tickers()
+    except Exception:
+        _tickers = {}
+
     has_positions = [p for p in positions if p.get("contracts") and float(p["contracts"]) > 0]
 
     if not has_positions:
@@ -214,9 +222,9 @@ def check_and_close():
         # 状态文件里没有持仓的币可能要清? 暂不处理, 保持简单
         return  # 没持仓就睡
 
-    # ---- 每仓独立移动止盈(与总浮盈全平互不冲突, 共享本次持仓+1次行情拉取) ----
+    # ---- 每仓独立移动止盈(与总浮盈全平互不冲突, 复用本轮已拉的行情) ----
     try:
-        trailing_closed = check_trailing_stop(ex, has_positions)
+        trailing_closed = check_trailing_stop(ex, has_positions, _tickers)
         if trailing_closed:
             # 移动止盈已平的仓, 从本次总浮盈判定中剔除(避免重复操作)
             has_positions = [p for p in has_positions if p["symbol"] not in trailing_closed]
@@ -233,11 +241,6 @@ def check_and_close():
     total_loss = 0.0     # 负浮亏总和
     total_fee_base = 0.0
     details = []
-
-    try:
-        _tickers = ex.fetch_tickers()
-    except Exception:
-        _tickers = {}
 
     for p in has_positions:
         # 保证金从原始 info 的 marginSize 读取（ccxt .margin 可能为空）
@@ -373,18 +376,23 @@ def check_and_close():
 
 # ─── 主循环 ────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    print("[TRACKER] 启动，每 5 秒检查一次…")
+    print(f"[TRACKER] 启动，每 {TRACKER_POLL_SECONDS} 秒拉取一次行情检查…")
 
     # crontab 每分钟触发，内部循环 55 秒
     start_time = time.time()
     timeout = 55  # 最多跑 55 秒，给下个 cron 留余地
 
     while time.time() - start_time < timeout:
+        iter_start = time.time()
         try:
             check_and_close()
         except Exception as e:
             print(f"[TRACKER ERROR] {e}")
             import traceback; traceback.print_exc()
-        time.sleep(3)
+        # 按目标轮询间隔补齐剩余时间, 使每次行情刷新稳定在 TRACKER_POLL_SECONDS 秒
+        elapsed = time.time() - iter_start
+        remain = TRACKER_POLL_SECONDS - elapsed
+        if remain > 0:
+            time.sleep(remain)
 
     print("[TRACKER] 本轮结束（将由 crontab 重新拉起）")
