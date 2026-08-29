@@ -180,7 +180,7 @@ def check_trailing_stop(ex, positions, tickers=None):
             try:
                 close_side = "sell" if side == "long" else "buy"
                 o = ex.create_order(sym, "market", close_side, float(contracts), None, {
-                    "reduceOnly": True, "marginMode": "crossed", "productType": "USDT-FUTURES"})
+                    "hedged": True, "reduceOnly": True, "marginMode": "crossed", "productType": "USDT-FUTURES"})
                 if o and o.get("id"):
                     closed.append(f"{sym}:{side}")
                     # 用开仓价+实时价自算真实浮盈(空单不再反号)
@@ -326,6 +326,7 @@ def check_and_close():
             tgt_side = target.get("side")  # long/short
             side = "sell" if tgt_side == "long" else "buy"
             order = ex.create_order(d["symbol"], "market", side, float(contracts), None, {
+                "hedged": True,
                 "reduceOnly": True,
                 "marginMode": "crossed",
             })

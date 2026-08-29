@@ -353,7 +353,11 @@ def cmd_open(wait_second=None):
                 print(f"   ❌ {ccxt_sym} 成交额 {qty*price:.2f}U 低于最低 {min_usdt}U")
                 continue
 
-            # ── 开仓前: 只设杠杆(5x 双向)。marginMode 下单不生效, 统一开完后再补切。 ──
+            # ── 设置保证金模式 + 杠杆(双向模式一次性设置, 两向共用) ──
+            try:
+                ex.set_margin_mode(MARGIN_MODE, ccxt_sym)
+            except Exception as e:
+                print(f"   ⚠️ {ccxt_sym} set_margin_mode 失败: {str(e)[:60]}")
             for ls in want_sides:
                 try:
                     ex.set_leverage(LEVERAGE, ccxt_sym, {"side": ls})
@@ -363,9 +367,7 @@ def cmd_open(wait_second=None):
                     except Exception as e:
                         print(f"   ⚠️ {ccxt_sym} 设杠杆({ls})失败: {str(e)[:60]}")
 
-            # ── 第一步: 把所有缺失方向都开出来(双向多用 create_order + hedged=True) ──
-            just_opened = []   # 本轮新开的方向
-            newly_summary = {} # {side: order_id}
+            # ── 逐个方向开仓 ──
             for side in to_open:
                 dside = "buy" if side == "long" else "sell"
                 try:
@@ -378,10 +380,80 @@ def cmd_open(wait_second=None):
                         print(f"   ❌ {ccxt_sym} {side} 下单失败: {order}")
                         continue
                     order_id = order["id"]
-                    newly_summary[side] = order_id
-                    just_opened.append(side)
-                    print(f"   ✅ {ccxt_sym} {side}({dside}) {qty}张 @ {price} orderId={order_id}")
-                    time.sleep(0.5)
+                    print(f"   ✅ {ccxt_sym} {side}({dside}) {qty}张 @ {price} (保证金 {SINGLE_AMOUNT}U×{LEVERAGE}x {MARGIN_MODE}) orderId={order_id}")
+
+                    # 补切全仓(下单不认 marginMode) + 回读确认(最多6次)
+                    actual_mm = "unverified"
+                    margin_ok = False
+                    try:
+                        time.sleep(1.0)
+                        try:
+                            ex.set_margin_mode(MARGIN_MODE, ccxt_sym)
+                        except Exception:
+                            time.sleep(1.0)
+                        for mm_retry in range(6):
+                            chk = ex.fetch_positions([ccxt_sym])
+                            for cp in chk:
+                                if cp.get("side") == side and cp.get("contracts") and float(cp["contracts"]) > 0:
+                                    actual_mm = cp.get("marginMode") or "unknown"
+                                    norm = "crossed" if str(actual_mm).lower() in ("cross","crossed") else str(actual_mm).lower()
+                                    margin_ok = (norm == MARGIN_MODE)
+                                    break
+                            if margin_ok:
+                                print(f"   ✅ {ccxt_sym} {side} 全仓确认={actual_mm}")
+                                break
+                            time.sleep(1.0)
+                    except Exception as e:
+                        print(f"   (回读校验异常: {str(e)[:60]})")
+
+                    # 开仓价(用成交均价优先, 否则用市价)
+                    entry_px = price
+                    try:
+                        entry_px = float(order.get("average") or price)
+                    except Exception:
+                        pass
+
+                    # 止盈止损 ±90%
+                    if side == "long":
+                        sl_px = entry_px * (1 - 0.90)   # -90%
+                        tp_px = entry_px * (1 + 0.90)   # +90%
+                    else:
+                        sl_px = entry_px * (1 + 0.90)   # +90%
+                        tp_px = entry_px * (1 - 0.90)   # -90%
+
+                    # 挂止损 + 止盈计划单(reduceOnly)
+                    reduce_side = "sell" if side == "long" else "buy"
+                    for label, trig in (("SL", sl_px), ("TP", tp_px)):
+                        try:
+                            trig_r = math.floor(trig * (10 ** pp)) / (10 ** pp)
+                            tord = ex.create_trigger_order(
+                                ccxt_sym, "market", reduce_side, float(qty), None, trig_r, {
+                                    "hedged": True,
+                                    "marginMode": MARGIN_MODE,
+                                    "productType": "USDT-FUTURES",
+                                    "reduceOnly": True,
+                                }
+                            )
+                            if tord and tord.get("id"):
+                                print(f"   🛡️ {ccxt_sym} {side} {label} @ {trig_r}")
+                            else:
+                                print(f"   ⚠️ {ccxt_sym} {side} {label} 下单返回异常: {tord}")
+                        except Exception as e:
+                            print(f"   ⚠️ {ccxt_sym} {side} {label} 设置失败: {str(e)[:80]}")
+
+                    opened.append({
+                        "symbol": ccxt_sym,
+                        "side": side,
+                        "qty": qty,
+                        "price": entry_px,
+                        "amount_usdt": SINGLE_AMOUNT,
+                        "rate": cand["rate"],
+                        "order_id": order_id,
+                        "margin_mode": MARGIN_MODE,
+                        "margin_mode_confirmed": margin_ok,
+                    })
+                    existing.setdefault(ccxt_sym, {"long": False, "short": False})[side] = True
+
                 except Exception as e:
                     print(f"   ❌ {ccxt_sym} {side} 开仓异常: {str(e)[:90]}")
                     if is_copy_trade_error(e):
@@ -394,96 +466,6 @@ def cmd_open(wait_second=None):
                             tg_send(f"🚫 {ccxt_sym} 带单限制币,已加入跳过黑名单")
                     else:
                         tg_send(f"⚠️ {ccxt_sym} {side} 开仓异常: {str(e)[:80]}")
-
-            if not just_opened:
-                print(f"   ⚠️ {ccxt_sym} 本轮没有新开成任何方向")
-                continue
-
-            # ── 第二步: 全部开完后统一补切全仓 + 确认5x (双向下有持仓后也能set) ──
-            time.sleep(1.0)
-            try:
-                ex.set_margin_mode(MARGIN_MODE, ccxt_sym)
-                print(f"   🔄 {ccxt_sym} 统一补切全仓")
-            except Exception as e:
-                print(f"   ⚠️ {ccxt_sym} 统一补切全仓异常: {str(e)[:60]}")
-            for ls in just_opened:
-                for lr in range(3):
-                    try:
-                        ex.set_leverage(LEVERAGE, ccxt_sym, {"side": ls})
-                        break
-                    except Exception:
-                        time.sleep(0.5)
-
-            # ── 第三步: 回读确认每个新开方向的 marginMode + 杠杆 ──
-            time.sleep(1.0)
-            confirmed = {}   # side -> {mm_ok, lev_ok}
-            for rl in range(6):
-                try:
-                    chk = ex.fetch_positions([ccxt_sym])
-                except Exception:
-                    chk = []
-                for cp in chk:
-                    cs = cp.get("side")
-                    if cs in just_opened and cp.get("contracts") and float(cp["contracts"]) > 0:
-                        amm = str(cp.get("marginMode") or "").lower()
-                        mm_ok = amm in ("cross", "crossed")
-                        lev = float(cp.get("leverage") or 0)
-                        lev_ok = abs(lev - LEVERAGE) < 1e-6
-                        if cs not in confirmed or (mm_ok and lev_ok):
-                            confirmed[cs] = {"mm_ok": mm_ok, "lev_ok": lev_ok, "mm": amm, "lev": lev}
-                if len(confirmed) >= len(just_opened) and all(v["mm_ok"] and v["lev_ok"] for v in confirmed.values()):
-                    break
-                time.sleep(1.0)
-            for cs in just_opened:
-                c = confirmed.get(cs, {"mm_ok": False, "lev_ok": False, "mm": "?", "lev": "?"})
-                if c["mm_ok"] and c["lev_ok"]:
-                    print(f"   ✅ {ccxt_sym} {cs} 全仓+{LEVERAGE}x 确认")
-                else:
-                    print(f"   ⚠️ {ccxt_sym} {cs} mm={c['mm']} lev={c['lev']} (可能未切对)")
-                    tg_send(f"⚠️ {ccxt_sym} {cs} 补切异常 mm={c['mm']} lev={c['lev']}, 请人工核")
-
-            # ── 第四步: 对每个新开仓位挂 ±90% 止盈止损 ──
-            for side in just_opened:
-                entry_px = price
-                if side == "long":
-                    sl_px = price * (1 - 0.90)
-                    tp_px = price * (1 + 0.90)
-                else:
-                    sl_px = price * (1 + 0.90)
-                    tp_px = price * (1 - 0.90)
-                reduce_side = "sell" if side == "long" else "buy"
-                for label, trig in (("SL", sl_px), ("TP", tp_px)):
-                    try:
-                        trig_r = math.floor(trig * (10 ** pp)) / (10 ** pp)
-                        tord = ex.create_trigger_order(
-                            ccxt_sym, "market", reduce_side, float(qty), None, trig_r, {
-                                "hedged": True,
-                                "marginMode": MARGIN_MODE,
-                                "productType": "USDT-FUTURES",
-                                "reduceOnly": True,
-                            }
-                        )
-                        if tord and tord.get("id"):
-                            print(f"   🛡️ {ccxt_sym} {side} {label} @ {trig_r}")
-                        else:
-                            print(f"   ⚠️ {ccxt_sym} {side} {label} 下单返回异常: {tord}")
-                    except Exception as e:
-                        print(f"   ⚠️ {ccxt_sym} {side} {label} 设置失败: {str(e)[:80]}")
-
-                mmc = confirmed.get(side, {}).get("mm_ok", False)
-                opened.append({
-                    "symbol": ccxt_sym,
-                    "side": side,
-                    "qty": qty,
-                    "price": price,
-                    "amount_usdt": SINGLE_AMOUNT,
-                    "rate": cand["rate"],
-                    "order_id": newly_summary.get(side),
-                    "margin_mode": MARGIN_MODE,
-                    "margin_mode_confirmed": mmc,
-                    "leverage": confirmed.get(side, {}).get("lev", LEVERAGE),
-                })
-                existing.setdefault(ccxt_sym, {"long": False, "short": False})[side] = True
 
         # 日志
         log_entry = {
