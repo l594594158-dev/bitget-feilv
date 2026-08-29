@@ -17,11 +17,6 @@ FUNDING_THRESHOLD = 0.002   # 费率阈值 (±0.2%)
 
 EXCLUDE_SYMBOLS = ["BTC", "ETH", "BNB"]  # 排除币种
 
-# === 双向持仓模式(2026-08-30 娜姐要求) ===
-HEDGED = True          # True=双向持仓: 满足条件的币 多空各开一单; False=单向持仓
-HEDGE_BOTH_SIDES = True  # True=同币同时开多+空各一单(两边都吃跟踪止盈)
-FUNDING_SOURCE = "bitget"  # 费率源: "bitget"=用 Bitget 自己合约费率(原来用币安 "binance")
-
 OPEN_FEE_RATE = 0.0005     # 开仓手续费 0.05%
 CLOSE_FEE_RATE = 0.0005    # 平仓手续费 0.05%
 TOTAL_FEE_RATE = 0.001     # 合并 0.1%

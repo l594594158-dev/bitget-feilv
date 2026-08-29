@@ -46,11 +46,9 @@ def get_exchange():
         "enableRateLimit": True,
     })
 
-# ─── 撤销某币种的计划委托(止盈止损) ──────────────────────────────
-def cancel_symbol_plan_orders(ex, ccxt_sym, plan_side=None):
-    """平仓后顺带撤销该币种遗留的止盈止损计划委托单(normal_plan),避免触发反向裸单。
-    双向模式下 plan_side 指定只撤销某一方向(如 "sell"/"buy"), 不传则撤销全部方向。
-    """
+# ─── 撤销某币种的计划委托(止损) ──────────────────────────────────
+def cancel_symbol_plan_orders(ex, ccxt_sym):
+    """平仓后顺带撤销该币种遗留的止损计划委托单(normal_plan)，避免触发反向裸单。"""
     try:
         if not ex.markets:
             ex.load_markets()
@@ -70,11 +68,6 @@ def cancel_symbol_plan_orders(ex, ccxt_sym, plan_side=None):
             oid = o.get("orderId")
             if not oid:
                 continue
-            # 双向模式按方向过滤: 只撤销指定方向的计划单
-            if plan_side is not None:
-                o_side = str(o.get("side") or "").lower()
-                if o_side != plan_side.lower():
-                    continue
             try:
                 ex.private_mix_post_v2_mix_order_cancel_plan_order({
                     "productType": "USDT-FUTURES",
@@ -84,9 +77,9 @@ def cancel_symbol_plan_orders(ex, ccxt_sym, plan_side=None):
                 })
                 n += 1
             except Exception as e:
-                print(f"   ⚠️ {ccxt_sym} 撤销计划单失败 {oid}: {str(e)[:70]}")
+                print(f"   ⚠️ {ccxt_sym} 撤销止损计划单失败 {oid}: {str(e)[:70]}")
         if n:
-            print(f"   🧹 {ccxt_sym} 已撤销 {n} 个计划单{'(方向:' + plan_side + ')' if plan_side else ''}")
+            print(f"   🧹 {ccxt_sym} 已撤销 {n} 个遗留止损计划单")
         return n
     except Exception as e:
         print(f"   ⚠️ {ccxt_sym} 清理计划单异常: {str(e)[:70]}")
@@ -148,14 +141,14 @@ def check_trailing_stop(ex, positions, tickers=None):
         # 涨跌幅: 多单 = (现价/开仓 -1), 空单 = (开仓/现价 -1)
         move_pct = (last / entry - 1) if side == "long" else (entry / last - 1)
 
-        st = state.get(f"{sym}:{side}", {"activated": False, "extreme_price": (last if side == "long" else last)})
+        st = state.get(sym, {"activated": False, "extreme_price": (last if side == "long" else last)})
 
         # 未激活: 涨跌幅≥激活阈值则激活, 并锁定当前价为极值起点
         if not st.get("activated"):
             if move_pct >= TRAILING_ACTIVATE_PCT:
                 st["activated"] = True
                 st["extreme_price"] = last  # 激活起点即当前极值
-                state[f"{sym}:{side}"] = st
+                state[sym] = st
                 print(f"[TRAIL] {now} 🎯 {sym} {side} 激活移动止盈 (涨跌{move_pct*100:.2f}%≥{TRAILING_ACTIVATE_PCT*100:.0f}%), 起始极值={last}")
             continue
 
@@ -182,7 +175,7 @@ def check_trailing_stop(ex, positions, tickers=None):
                 o = ex.create_order(sym, "market", close_side, float(contracts), None, {
                     "reduceOnly": True, "marginMode": "crossed", "productType": "USDT-FUTURES"})
                 if o and o.get("id"):
-                    closed.append(f"{sym}:{side}")
+                    closed.append(sym)
                     # 用开仓价+实时价自算真实浮盈(空单不再反号)
                     _rpnl = 0.0
                     try:
@@ -193,9 +186,8 @@ def check_trailing_stop(ex, positions, tickers=None):
                     except Exception:
                         _rpnl = float(p.get("unrealizedPnl") or 0)
                     print(f"   ✅ 移动止盈平仓 {sym} 浮盈={_rpnl:.4f}U")
-                    # 只撤该方向(多→sell/空→buy)的止盈止损计划单, 保留另一方向的
-                    cancel_symbol_plan_orders(ex, sym, plan_side="sell" if side == "long" else "buy")
-                    state.pop(f"{sym}:{side}", None)  # 清状态(按 symbol:side)
+                    cancel_symbol_plan_orders(ex, sym)
+                    state.pop(sym, None)  # 清状态
                     try:
                         tg_send(f"🎯 移动止盈平仓 {sym} ({side}) {_rpnl:+.4f}U")
                     except Exception:
@@ -206,7 +198,7 @@ def check_trailing_stop(ex, positions, tickers=None):
                 print(f"   ❌ {sym} 移动止盈平仓异常: {str(e)[:80]}")
         elif update_extreme:
             # 价格创新高/新低, 状态更新
-            state[f"{sym}:{side}"] = st
+            state[sym] = st
 
     save_trailing_state(state)
     return closed
@@ -234,9 +226,8 @@ def check_and_close():
     try:
         trailing_closed = check_trailing_stop(ex, has_positions, _tickers)
         if trailing_closed:
-            # 移动止盈已平的仓, 从本次总浮盈判定中剔除(避免重复操作); 按 symbol:side 精确剔除
-            closed_keys = set(trailing_closed)
-            has_positions = [p for p in has_positions if f"{p['symbol']}:{p.get('side')}" not in closed_keys]
+            # 移动止盈已平的仓, 从本次总浮盈判定中剔除(避免重复操作)
+            has_positions = [p for p in has_positions if p["symbol"] not in trailing_closed]
             if not has_positions:
                 print(f"[TRACKER] {datetime.now().strftime('%H:%M:%S')} 移动止盈已全平, 本轮跳过总浮盈判定")
                 return
@@ -306,34 +297,27 @@ def check_and_close():
     # ---- 达标！平仓 ----
     print(f"[TRACKER] 🎯 净浮盈 {net_pnl:.4f} > 阈值 {threshold:.4f}，开始平仓")
 
-    # 市价全平（用 ccxt）; 双向模式按 symbol+方向精确平, 双向都平掉
+    # 市价全平（用 ccxt）
     closed = []
     for d in details:
         try:
-            # 按 symbol 拉实时持仓, 找到匹配方向的仓
-            pos_list = ex.fetch_positions()
-            target = None
-            for pp in pos_list:
-                if pp["symbol"] == d["symbol"] and pp.get("side") == ("long" if d["side"] == "多" else "short") \
-                   and pp.get("contracts") and float(pp["contracts"]) > 0:
-                    target = pp
-                    break
-            if target is None:
+            # 先查实时持仓数量
+            pos = [p for p in ex.fetch_positions() if p["symbol"] == d["symbol"]]
+            if not pos:
                 continue
-            contracts = float(target.get("contracts", 0) or 0)
+            contracts = float(pos[0].get("contracts", 0) or 0)
             if contracts <= 0:
                 continue
-            tgt_side = target.get("side")  # long/short
-            side = "sell" if tgt_side == "long" else "buy"
+            side = "sell" if d["side"] == "多" else "buy"
             order = ex.create_order(d["symbol"], "market", side, float(contracts), None, {
                 "reduceOnly": True,
                 "marginMode": "crossed",
             })
             if order and order.get("id"):
-                closed.append(f"{d['symbol']}:{tgt_side}")
-                print(f"   ✅ 平仓 {d['symbol']} {tgt_side} 浮盈 {d['pnl']:.4f}U")
-                # 只撤该方向(多→sell/空→buy)的止盈止损计划单, 保留另一方向
-                cancel_symbol_plan_orders(ex, d["symbol"], plan_side="sell" if tgt_side == "long" else "buy")
+                closed.append(d["symbol"])
+                print(f"   ✅ 平仓 {d['symbol']} 浮盈 {d['pnl']:.4f}U")
+                # 关键修复：平仓后顺带撤销该币种遗留的止损计划委托单
+                cancel_symbol_plan_orders(ex, d["symbol"])
             else:
                 print(f"   ❌ {d['symbol']} 平仓失败: {order}")
         except Exception as e:
