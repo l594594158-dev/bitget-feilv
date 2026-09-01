@@ -353,10 +353,11 @@ def cmd_open(wait_second=None):
                 print(f"   ❌ {ccxt_sym} 成交额 {qty*price:.2f}U 低于最低 {min_usdt}U")
                 continue
 
-            # ── 开仓前: 双向模式必须按方向先设好保证金模式+杠杆(修复45117)。
-            #    Bitget双向持仓下, 某方向已有仓位时, 开另一方向前必须先用带 side 的
-            #    set_margin_mode 把该方向预切到目标模式, 否则 create_order 报 45117
-            #    (Currently holding positions or orders, the margin mode cannot change).
+            # ── 开仓前: 双向模式先按方向设好保证金模式+杠杆(修复45117)。 ──
+            #    真凶: create_order 报文里的 marginMode 字段。当某方向已有持仓/订单时,
+            #    Bitget 会把带 marginMode 的下单当作"调整保证金模式"动作拒绝(45117)。
+            #    修复: 开仓前用带 side 的 set_margin_mode 把缺失方向预切到目标模式,
+            #    create_order 不再传 marginMode(保持当前 mode, 不触发切换动作)。
             for side in to_open:
                 for _try in range(2):
                     try:
@@ -386,9 +387,6 @@ def cmd_open(wait_second=None):
                 try:
                     order = ex.create_order(ccxt_sym, "market", dside, float(qty), None, {
                         "hedged": True,
-                        "tradeSide": "Open",
-                        "holdSide": side,
-                        "marginMode": MARGIN_MODE,
                         "productType": "USDT-FUTURES",
                     })
                     if not (order and order.get("id")):
@@ -480,7 +478,6 @@ def cmd_open(wait_second=None):
                         tord = ex.create_trigger_order(
                             ccxt_sym, "market", reduce_side, float(qty), None, trig_r, {
                                 "hedged": True,
-                                "marginMode": MARGIN_MODE,
                                 "productType": "USDT-FUTURES",
                                 "reduceOnly": True,
                             }
