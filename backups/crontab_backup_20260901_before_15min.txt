@@ -1,0 +1,3 @@
+# 罗海资金费率收割 (luohai_funding)
+*/30 * * * * cd /home/ubuntu/.openclaw/workspace/luohai_funding && /usr/bin/python3 funding_crop.py scan --auto-open >> logs/cron_scan.log 2>&1
+* * * * * cd /home/ubuntu/.openclaw/workspace/luohai_funding && /usr/bin/python3 tracker.py >> logs/cron_tracker.log 2>&1
