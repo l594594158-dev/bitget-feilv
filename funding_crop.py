@@ -353,17 +353,32 @@ def cmd_open(wait_second=None):
                 print(f"   ❌ {ccxt_sym} 成交额 {qty*price:.2f}U 低于最低 {min_usdt}U")
                 continue
 
-            # ── 开仓前: 只设杠杆(5x 双向)。marginMode 下单不生效, 统一开完后再补切。 ──
-            for ls in want_sides:
+            # ── 开仓前: 双向模式必须按方向先设好保证金模式+杠杆(修复45117)。
+            #    Bitget双向持仓下, 某方向已有仓位时, 开另一方向前必须先用带 side 的
+            #    set_margin_mode 把该方向预切到目标模式, 否则 create_order 报 45117
+            #    (Currently holding positions or orders, the margin mode cannot change).
+            for side in to_open:
+                for _try in range(2):
+                    try:
+                        ex.set_margin_mode(MARGIN_MODE, ccxt_sym, {"side": side})
+                        break
+                    except Exception as e:
+                        # 再试一次不带 side(部分场景首次需先建立方向)
+                        try:
+                            ex.set_margin_mode(MARGIN_MODE, ccxt_sym)
+                            break
+                        except Exception as e2:
+                            if _try == 0:
+                                print(f"   ⚠️ {ccxt_sym} 开仓前切全仓({side})失败(拟继续): {str(e2)[:60]}")
                 try:
-                    ex.set_leverage(LEVERAGE, ccxt_sym, {"side": ls})
+                    ex.set_leverage(LEVERAGE, ccxt_sym, {"side": side})
                 except Exception:
                     try:
                         ex.set_leverage(LEVERAGE, ccxt_sym)
                     except Exception as e:
-                        print(f"   ⚠️ {ccxt_sym} 设杠杆({ls})失败: {str(e)[:60]}")
+                        print(f"   ⚠️ {ccxt_sym} 设杠杆({side})失败: {str(e)[:60]}")
 
-            # ── 第一步: 把所有缺失方向都开出来(双向多用 create_order + hedged=True) ──
+            # ── 第一步: 把所有缺失方向都开出来(双向多用 create_order + hedged=True + tradeSide=Open) ──
             just_opened = []   # 本轮新开的方向
             newly_summary = {} # {side: order_id}
             for side in to_open:
@@ -371,6 +386,8 @@ def cmd_open(wait_second=None):
                 try:
                     order = ex.create_order(ccxt_sym, "market", dside, float(qty), None, {
                         "hedged": True,
+                        "tradeSide": "Open",
+                        "holdSide": side,
                         "marginMode": MARGIN_MODE,
                         "productType": "USDT-FUTURES",
                     })
@@ -399,13 +416,18 @@ def cmd_open(wait_second=None):
                 print(f"   ⚠️ {ccxt_sym} 本轮没有新开成任何方向")
                 continue
 
-            # ── 第二步: 全部开完后统一补切全仓 + 确认5x (双向下有持仓后也能set) ──
+            # ── 第二步: 全部开完后按方向补切全仓 + 确认5x (带side,避免对已持仓方向报45117) ──
             time.sleep(1.0)
-            try:
-                ex.set_margin_mode(MARGIN_MODE, ccxt_sym)
-                print(f"   🔄 {ccxt_sym} 统一补切全仓")
-            except Exception as e:
-                print(f"   ⚠️ {ccxt_sym} 统一补切全仓异常: {str(e)[:60]}")
+            for ls in just_opened:
+                try:
+                    ex.set_margin_mode(MARGIN_MODE, ccxt_sym, {"side": ls})
+                    print(f"   🔄 {ccxt_sym} 补切全仓({ls})")
+                except Exception:
+                    try:
+                        ex.set_margin_mode(MARGIN_MODE, ccxt_sym)
+                        print(f"   🔄 {ccxt_sym} 补切全仓(整体)")
+                    except Exception as e:
+                        print(f"   ⚠️ {ccxt_sym} 补切全仓({ls})异常: {str(e)[:60]}")
             for ls in just_opened:
                 for lr in range(3):
                     try:
