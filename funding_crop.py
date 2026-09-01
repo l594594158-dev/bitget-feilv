@@ -462,15 +462,15 @@ def cmd_open(wait_second=None):
                     print(f"   ⚠️ {ccxt_sym} {cs} mm={c['mm']} lev={c['lev']} (可能未切对)")
                     tg_send(f"⚠️ {ccxt_sym} {cs} 补切异常 mm={c['mm']} lev={c['lev']}, 请人工核")
 
-            # ── 第四步: 对每个新开仓位挂 ±90% 止盈止损 ──
+            # ── 第四步: 对每个新开仓位按新比例挂止盈止损(2026-09-01: 止盈299%, 多单抽损99%/空单抽损299%) ──
             for side in just_opened:
                 entry_px = price
                 if side == "long":
-                    sl_px = price * (1 - 0.90)
-                    tp_px = price * (1 + 0.90)
+                    sl_px = price * (1 - SL_LONG_PCT)      # ×0.01
+                    tp_px = price * (1 + TP_LONG_PCT)      # ×3.99
                 else:
-                    sl_px = price * (1 + 0.90)
-                    tp_px = price * (1 - 0.90)
+                    sl_px = price * (1 + SL_SHORT_PCT)     # ×3.99
+                    tp_px = price * (1 - TP_SHORT_PCT)     # ×0.01
                 reduce_side = "sell" if side == "long" else "buy"
                 for label, trig in (("SL", sl_px), ("TP", tp_px)):
                     try:
