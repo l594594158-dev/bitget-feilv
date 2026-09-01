@@ -462,32 +462,29 @@ def cmd_open(wait_second=None):
                     print(f"   ⚠️ {ccxt_sym} {cs} mm={c['mm']} lev={c['lev']} (可能未切对)")
                     tg_send(f"⚠️ {ccxt_sym} {cs} 补切异常 mm={c['mm']} lev={c['lev']}, 请人工核")
 
-            # ── 第四步: 对每个新开仓位按新比例挂止盈止损(2026-09-01: 止盈299%, 多单抽损99%/空单抽损299%) ──
+            # ── 第四步: 对每个新开仓位只挂止损(不挂止盈,止盈交给移动跟踪止盈 tracker)。2026-09-01 娜姐要求 ──
             for side in just_opened:
                 entry_px = price
                 if side == "long":
                     sl_px = price * (1 - SL_LONG_PCT)      # ×0.01
-                    tp_px = price * (1 + TP_LONG_PCT)      # ×3.99
                 else:
                     sl_px = price * (1 + SL_SHORT_PCT)     # ×3.99
-                    tp_px = price * (1 - TP_SHORT_PCT)     # ×0.01
                 reduce_side = "sell" if side == "long" else "buy"
-                for label, trig in (("SL", sl_px), ("TP", tp_px)):
-                    try:
-                        trig_r = math.floor(trig * (10 ** pp)) / (10 ** pp)
-                        tord = ex.create_trigger_order(
-                            ccxt_sym, "market", reduce_side, float(qty), None, trig_r, {
-                                "hedged": True,
-                                "productType": "USDT-FUTURES",
-                                "reduceOnly": True,
-                            }
-                        )
-                        if tord and tord.get("id"):
-                            print(f"   🛡️ {ccxt_sym} {side} {label} @ {trig_r}")
-                        else:
-                            print(f"   ⚠️ {ccxt_sym} {side} {label} 下单返回异常: {tord}")
-                    except Exception as e:
-                        print(f"   ⚠️ {ccxt_sym} {side} {label} 设置失败: {str(e)[:80]}")
+                try:
+                    trig_r = math.floor(sl_px * (10 ** pp)) / (10 ** pp)
+                    tord = ex.create_trigger_order(
+                        ccxt_sym, "market", reduce_side, float(qty), None, trig_r, {
+                            "hedged": True,
+                            "productType": "USDT-FUTURES",
+                            "reduceOnly": True,
+                        }
+                    )
+                    if tord and tord.get("id"):
+                        print(f"   🛡️ {ccxt_sym} {side} SL @ {trig_r}")
+                    else:
+                        print(f"   ⚠️ {ccxt_sym} {side} SL 下单返回异常: {tord}")
+                except Exception as e:
+                    print(f"   ⚠️ {ccxt_sym} {side} SL 设置失败: {str(e)[:80]}")
 
                 mmc = confirmed.get(side, {}).get("mm_ok", False)
                 opened.append({
