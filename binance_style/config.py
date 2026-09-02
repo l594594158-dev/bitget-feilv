@@ -41,7 +41,7 @@ PRICE_RISE_PCT = 0.05       # 价格相对起点价涨幅 > 5%
 MAX_TRACK_SCANS = 300       # 单个币最多跟踪轮数(防无限, 中途跌回<0.01%即重置)
 
 # === 开仓参数(与币安一致) ===
-ORDER_MARGIN_USDT = 5.0     # 初始保证金 5U
+ORDER_MARGIN_USDT = 20.0    # 初始保证金 20U (娜姐 2026-09-03 01:56 调, 原5U)
 LEVERAGE = 10               # 10倍杠杆
 MARGIN_MODE = "crossed"     # 全仓
 POSITION_SIDE = "LONG"      # 只做多(双向模式的 LONG 侧)
