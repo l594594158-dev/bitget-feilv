@@ -352,7 +352,7 @@ def _trailing_tp_check(ex):
         actual_long = set()
         for p in ex.fetch_positions():
             if float(p.get('contracts') or 0) != 0 and p.get('side') == 'long':
-                actual_long.add(p['symbol'].replace(':USDT', ':USDT'))
+                actual_long.add(p['symbol'])
         removed = [s for s in opens if s not in actual_long]
         if removed:
             for s in removed:
