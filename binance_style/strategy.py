@@ -102,7 +102,7 @@ def append_rate(rec):
         f.write(json.dumps(rec) + '\n')
 
 def had_recent_high(hist, window_min=None):
-    """高位回落过滤(娜姐2026-09-03最终): 该币最近 window_min 分钟内是否出现过 |费率|>RECENT_HIGH_ABS(0.05%) 高位.
+    """高位回落过滤(娜姐2026-09-03最终): 该币最近 window_min 分钟内是否出现过 |费率|>RECENT_HIGH_ABS(0.10%) 高位.
     True=刚从更高费率回落, 应视为'假起点', 不建起点/不入监控."""
     if window_min is None:
         window_min = RECENT_HIGH_WINDOW_MIN
