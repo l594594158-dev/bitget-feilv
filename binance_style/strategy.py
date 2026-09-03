@@ -163,6 +163,30 @@ def write_rates_sqlite_batch(rows):
         print(f'  ⚠️ SQLite 写入失败: {e}')
     finally:
         conn.close()
+    prune_rates_sqlite()
+
+def prune_rates_sqlite():
+    """滚动清理: 保留最近 RATE_SQLITE_RETENTION_DAYS(31)天数据, 超出一个月删最旧(娜姐2026-09-03). 每天最多一次."""
+    try:
+        import sqlite3
+        now_ms = datetime.now(timezone.utc).timestamp() * 1000.0
+        cutoff = now_ms - RATE_SQLITE_RETENTION_DAYS * 86400_000.0
+        today = _bj(now_ms)[:10]
+        conn = sqlite3.connect(RATE_SQLITE_DB, timeout=15)
+        try:
+            c = conn.cursor()
+            c.execute('CREATE TABLE IF NOT EXISTS meta(k TEXT PRIMARY KEY, v TEXT)')
+            row = c.execute("SELECT v FROM meta WHERE k='pruned_on'").fetchone()
+            if row and row[0] == today:
+                return
+            c.execute('DELETE FROM rates WHERE ts < ?', (int(cutoff),))
+            c.execute("INSERT OR REPLACE INTO meta(k,v) VALUES('pruned_on',?)", (today,))
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as _e:
+        print(f'  ⚠️ SQLite 清理跳过: {_e}')
+
 
 def had_recent_high(hist, window_min=None):
     """高位回落过滤(娜姐2026-09-03最终): 该币最近 window_min 分钟内是否出现过 |费率|>RECENT_HIGH_ABS(0.10%) 高位.
