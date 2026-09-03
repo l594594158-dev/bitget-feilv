@@ -32,6 +32,7 @@ TRACKER_POLL_SECONDS = 3       # 跟踪止盈: 每3秒拉一次行情
 
 # === 费率历史库 ===
 RATE_DB_FILE = os.path.join(DATA_DIR, "funding_rate_history.jsonl")
+RATE_SQLITE_DB = os.path.join(DATA_DIR, "funding_rate.db")    # SQLite 费率/价数据库 (娜姐2026-09-03, 与币安同步; 上涨前费率/价规律分析用)
 
 # === 异动跟踪条件(与币安一致, 2026-09-03) ===
 TRACK_START_ABS = 0.0001    # 起点下限: >= 0.01% 才可能建立起点

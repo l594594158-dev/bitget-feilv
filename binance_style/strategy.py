@@ -101,6 +101,41 @@ def append_rate(rec):
     with open(RATE_DB_FILE, 'a') as f:
         f.write(json.dumps(rec) + '\n')
 
+def init_rate_sqlite():
+    """SQLite 费率/价库(娜姐2026-09-03, 与币安同构): 建表 rates(symbol,ts,rate,price), 唯一键防重, 索引快查."""
+    import sqlite3
+    conn = sqlite3.connect(RATE_SQLITE_DB)
+    try:
+        c = conn.cursor()
+        c.execute('''CREATE TABLE IF NOT EXISTS rates (
+            symbol TEXT NOT NULL,
+            ts INTEGER NOT NULL,
+            rate REAL,
+            price REAL,
+            PRIMARY KEY (symbol, ts))''')
+        c.execute('CREATE INDEX IF NOT EXISTS idx_rates_ts ON rates(ts)')
+        c.execute('CREATE INDEX IF NOT EXISTS idx_rates_sym ON rates(symbol)')
+        conn.commit()
+    finally:
+        conn.close()
+
+def write_rates_sqlite_batch(rows):
+    """批量写入本轮轮询结果到 SQLite. rows: [{symbol,ts,rate,price}], 幂等(重复跳过)."""
+    if not rows:
+        return
+    import sqlite3
+    init_rate_sqlite()
+    conn = sqlite3.connect(RATE_SQLITE_DB)
+    try:
+        c = conn.cursor()
+        c.executemany('INSERT OR IGNORE INTO rates(symbol,ts,rate,price) VALUES(?,?,?,?)',
+                      [(r['symbol'], r['ts'], r.get('rate'), r.get('price')) for r in rows])
+        conn.commit()
+    except Exception as e:
+        print(f'  ⚠️ SQLite 写入失败: {e}')
+    finally:
+        conn.close()
+
 def had_recent_high(hist, window_min=None):
     """高位回落过滤(娜姐2026-09-03最终): 该币最近 window_min 分钟内是否出现过 |费率|>RECENT_HIGH_ABS(0.10%) 高位.
     True=刚从更高费率回落, 应视为'假起点', 不建起点/不入监控."""
@@ -149,6 +184,7 @@ def scan_funding_and_detect(dry_run=False):
     # 先取一次, 记录所有 USDT 永续
     symbols = [s for s in fr if s.endswith('/USDT:USDT')]
     fetched = 0
+    sql_rows = []   # 本轮新增记录, 同步写 SQLite
     for sym in symbols:
         base = sym.split('/')[0].upper()
         if any(base.startswith(e.upper()) for e in EXCLUDE_SYMBOLS):
@@ -159,10 +195,17 @@ def scan_funding_and_detect(dry_run=False):
             last = float(tk[sym]['last'])
         if rate is None:
             continue
-        append_rate({'symbol': sym, 'ts': now_ms, 'rate': float(rate),
-                     'price': last, 'time': ts_str})
+        rec = {'symbol': sym, 'ts': now_ms, 'rate': float(rate),
+               'price': last, 'time': ts_str}
+        append_rate(rec)
+        sql_rows.append(rec)
         fetched += 1
     print(f'[SCAN] 记录 {fetched} 个币的费率/价格 (Bitget)')
+    # 本轮数据同步写入 SQLite(带索引, 供上涨前费率/价规律分析)
+    try:
+        write_rates_sqlite_batch(sql_rows)
+    except Exception as _e:
+        print(f'  ⚠️ SQLite 写入异常: {_e}')
 
     db = load_rate_db()   # 含本次新记录
 
