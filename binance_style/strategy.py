@@ -101,6 +101,23 @@ def append_rate(rec):
     with open(RATE_DB_FILE, 'a') as f:
         f.write(json.dumps(rec) + '\n')
 
+def had_recent_high(hist, window_min=None):
+    """高位回落过滤(娜姐2026-09-03): 该币最近 window_min 分钟内是否出现过 |费率|>=0.10% 高位.
+    True=刚从高位回落, 应视为'假起点', 不建起点/不入监控."""
+    if window_min is None:
+        window_min = RECENT_HIGH_WINDOW_MIN
+    if not hist:
+        return False
+    latest = hist[-1]
+    cur_ts = latest['ts']
+    window_ms = window_min * 60 * 1000
+    for rec in reversed(hist):
+        if cur_ts - rec['ts'] > window_ms:
+            break
+        if abs(rec['rate']) >= TRACK_TRIGGER_ABS:
+            return True
+    return False
+
 # ═══════════════ 异动跟踪状态 ═══════════════
 TRACK_FILE = os.path.join(DATA_DIR, "track_state.json")
 def load_track():
@@ -211,6 +228,9 @@ def _evaluate(sym, hist, st):
     if abs_rate < TRACK_START_ABS:
         return None, False
     if abs_rate < TRACK_START_MAX:
+        # 高位回落过滤(娜姐2026-09-03): 最近RECENT_HIGH_WINDOW_MIN分钟内出现过|费率|>=0.10%高位→不建起点/清出监控
+        if had_recent_high(hist):
+            return None, False
         if mode == 'watching':
             return {'mode': 'watching', 'start_price': st.get('start_price')}, False
         else:
