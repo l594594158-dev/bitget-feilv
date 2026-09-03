@@ -1,0 +1,6 @@
+# 刘刚币安 (binance_new/strategy) - 币安费率蓄势做多策略
+*/5 * * * * cd /home/ubuntu/.openclaw/workspace/binance_new/strategy && /usr/bin/python3 strategy.py scan >> logs/scan.log 2>&1
+* * * * * cd /home/ubuntu/.openclaw/workspace/binance_new/strategy && /usr/bin/python3 tracker.py >> logs/tracker.log 2>&1
+# Bitget币安式 (luohai_funding/binance_style) - 费率蓄势做多(单向多, Bitget费率) 娜姐09-03
+*/5 * * * * cd /home/ubuntu/.openclaw/workspace/luohai_funding/binance_style && /usr/bin/python3 strategy.py scan >> logs/cron_scan.log 2>&1
+* * * * * cd /home/ubuntu/.openclaw/workspace/luohai_funding/binance_style && /usr/bin/python3 tracker.py >> logs/cron_tracker.log 2>&1
