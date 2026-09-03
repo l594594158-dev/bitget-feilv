@@ -101,8 +101,33 @@ def append_rate(rec):
     with open(RATE_DB_FILE, 'a') as f:
         f.write(json.dumps(rec) + '\n')
 
+# ═══════════════════════ SQLite 费率/价数据库 (娜姐2026-09-03, 与币安同构) ═══════════════════════
+_TSBJ = None
+def _bj(ts_ms):
+    """ms时间戳→北京时间(UTC+8)字符串 'YYYY-MM-DD HH:MM' (娜姐要求:数据库记录时间用北京时间标注)"""
+    global _TSBJ
+    if _TSBJ is None:
+        from datetime import timedelta
+        _TSBJ = timezone(timedelta(hours=8))
+    return datetime.fromtimestamp(ts_ms / 1000.0, _TSBJ).strftime('%Y-%m-%d %H:%M')
+
+def _ensure_bj_column():
+    """老库历史库补 bj_time 列(已建无此列的 .db 兼容, 幂等)"""
+    import sqlite3
+    conn = sqlite3.connect(RATE_SQLITE_DB)
+    try:
+        c = conn.cursor()
+        cols = [r[1] for r in c.execute('PRAGMA table_info(rates)')]
+        if 'bj_time' not in cols:
+            c.execute('ALTER TABLE rates ADD COLUMN bj_time TEXT DEFAULT \'\'')
+            conn.commit()
+    except Exception:
+        pass
+    finally:
+        conn.close()
+
 def init_rate_sqlite():
-    """SQLite 费率/价库(娜姐2026-09-03, 与币安同构): 建表 rates(symbol,ts,rate,price), 唯一键防重, 索引快查."""
+    """建表 rates(symbol,ts,rate,price,bj_time): 唯一键防重, 索引快查; bj_time=北京时间."""
     import sqlite3
     conn = sqlite3.connect(RATE_SQLITE_DB)
     try:
@@ -112,6 +137,7 @@ def init_rate_sqlite():
             ts INTEGER NOT NULL,
             rate REAL,
             price REAL,
+            bj_time TEXT DEFAULT '',
             PRIMARY KEY (symbol, ts))''')
         c.execute('CREATE INDEX IF NOT EXISTS idx_rates_ts ON rates(ts)')
         c.execute('CREATE INDEX IF NOT EXISTS idx_rates_sym ON rates(symbol)')
@@ -120,16 +146,18 @@ def init_rate_sqlite():
         conn.close()
 
 def write_rates_sqlite_batch(rows):
-    """批量写入本轮轮询结果到 SQLite. rows: [{symbol,ts,rate,price}], 幂等(重复跳过)."""
+    """批量写入本轮轮询结果到 SQLite. rows: [{symbol,ts,rate,price}], 幂等(重复跳过); 附北京时间bj_time(娜姐2026-09-03)."""
     if not rows:
         return
     import sqlite3
     init_rate_sqlite()
+    _ensure_bj_column()
     conn = sqlite3.connect(RATE_SQLITE_DB)
     try:
         c = conn.cursor()
-        c.executemany('INSERT OR IGNORE INTO rates(symbol,ts,rate,price) VALUES(?,?,?,?)',
-                      [(r['symbol'], r['ts'], r.get('rate'), r.get('price')) for r in rows])
+        c.executemany(
+            'INSERT OR IGNORE INTO rates(symbol,ts,rate,price,bj_time) VALUES(?,?,?,?,?)',
+            [(r['symbol'], r['ts'], r.get('rate'), r.get('price'), _bj(r['ts'])) for r in rows])
         conn.commit()
     except Exception as e:
         print(f'  ⚠️ SQLite 写入失败: {e}')
