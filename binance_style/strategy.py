@@ -238,27 +238,24 @@ def _open_long(ex, sym, stt):
         if not ex.markets:
             ex.load_markets()
         market = ex.market(sym)
-        size_multiplier = float(market.get("info", {}).get("sizeMultiplier", "1"))
-        pp = int((market.get("info") or {}).get("pricePlace", "8"))
-        prec_amount = market.get('precision', {}).get('amount')
-        # Bitget qccxt precision 常为 1 => 单位量级计数(F 张), 用金额/价的量级需按 sizeMultiplier
-        # 简化: 目标名义 = 保证金*杠杆
         last = ex.fetch_ticker(sym)['last']
         if not last or last <= 0:
             print(f'  ❌ {sym} 价格无效'); return
         notional_usdt = ORDER_MARGIN_USDT * LEVERAGE
-        # amount 以"张"计(qty_contract), 每张 = sizeMultiplier 个币
-        qty_contract = notional_usdt / last / size_multiplier
-        amt = float(market.get("info", {}).get("sizeDecimals", "0"))
-        # 向下取整到有效张单位
-        try:
-            amt_dec = int(market.get("info", {}).get("sizeDecimals", str(prec_amount if prec_amount else 0)))
-        except Exception:
-            amt_dec = 1
-        qty_contract = math.floor(qty_contract * (10 ** amt_dec)) / (10 ** amt_dec)
-        min_trade = float(market.get("info", {}).get("minTradeNum", "1"))
-        if qty_contract < min_trade:
-            print(f'  ❌ {sym} 合约张数 {qty_contract} 低于最小 {min_trade}'); return
+        # ⚠️ 数量修复(2026-09-03): create_order 传的是【base token 币数】,
+        # 直接 = 目标名义/价格, 再按交易所可交易精度向下取整即可。
+        # 旧代码错误地再 ÷ sizeMultiplier(如 EGLD=0.1), 把小面额币位放大10x,
+        # 一台单砸出 ≈10 倍名义(EGLD 曾开出 2000U 名义/200U 保证金)。
+        # FLOCK(sizeMultiplier=1) 不受影响所以看起来正常。
+        qty_contract = ex.amount_to_precision(sym, notional_usdt / last)
+        qty_tokens = float(qty_contract)
+        min_trade = float(
+            (market.get("limits") or {}).get("amount", {}).get("min")
+            or market.get("info", {}).get("minTradeNum", "1")
+            or 0
+        )
+        if qty_tokens < min_trade or qty_tokens <= 0:
+            print(f'  ❌ {sym} 开仓币数 {qty_tokens} 低于最小 {min_trade}'); return
 
         # 杠杆(双向模式需带 side) + 全仓(带 side)
         for _try in range(2):
@@ -278,13 +275,13 @@ def _open_long(ex, sym, stt):
                 print(f'  ⚠️ 设全仓: {str(e)[:60]}')
 
         # 开多(双向模式 LONG 侧): 用 buy, 不传 marginMode
-        order = ex.create_order(sym, "market", "buy", float(qty_contract), None, {
+        order = ex.create_order(sym, "market", "buy", qty_tokens, None, {
             "hedged": True,
             "productType": "USDT-FUTURES",
         })
         if not (order and order.get("id")):
             print(f'  ❌ {sym} 下单失败: {order}'); return
-        print(f'  ✅ 开多 {sym} {qty_contract}张(≈{notional_usdt:.2f}U) orderId={order.get("id")}')
+        print(f'  ✅ 开多 {sym} {qty_tokens}{market.get("base")}(≈{notional_usdt:.2f}U) orderId={order.get("id")}')
         # 成交价(下单后立即查询, 用下单前 last 作为 entry 近似)
         entry_est = _fetch_entry_price(ex, sym, order.get("id"), last)
         _record_open(sym, qty_contract, entry_est)
