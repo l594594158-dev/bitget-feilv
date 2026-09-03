@@ -320,6 +320,14 @@ def _evaluate(sym, hist, st):
     cur_px = last.get('price')
     mode = (st or {}).get('mode', 'none')
 
+    # ── 涨幅封顶放弃(方案A, 娜姐2026-09-03, 与币安同步): 价先飞、费率跟不上则清币 ──
+    _sp = (st or {}).get('start_price')
+    if (mode == 'watching' and _sp and cur_px and _sp > 0 and abs_rate < TRACK_TRIGGER_ABS):
+        _rise = (cur_px - _sp) / _sp
+        if _rise > MAX_RISE_ABANDON_PCT:
+            print(f'  ⏬ {base} 价已超起点+{_rise*100:.0f}%(>{MAX_RISE_ABANDON_PCT*100:.0f}%)但费率仅{abs_rate*100:.3f}%未达触发线, 假蓄势, 放弃')
+            return None, False
+
     if abs_rate < TRACK_START_ABS:
         return None, False
     if abs_rate < TRACK_START_MAX:
