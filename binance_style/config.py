@@ -49,9 +49,11 @@ POSITION_SIDE = "LONG"      # 只做多(双向模式的 LONG 侧)
 # === 排除币种 ===
 EXCLUDE_SYMBOLS = ["BTC", "ETH", "BNB"]
 
-# === 移动止盈(与币安一致: 涨20%激活/回撤15%平) ===
+# === 止盈: 开仓即挂条件单, 涨20%平50%; 一半给移动止盈(娜姐2026-09-03) ===
 TP_ACTIVATE_PCT = 0.20
 TP_DRAWDOWN_PCT = 0.15
+TP_SERVER_PCT = 0.20    # 开仓直接挂的服务端止盈触发涨幅(涨20%触发)
+TP_SERVER_FRAC = 0.50   # 该止盈单平掉仓位的 50%(一半); 剩余一半交移动止盈
 
 # === TG 通知 ===
 TG_BOT_TOKEN = os.getenv("TG_BOT_TOKEN", "")

@@ -284,7 +284,10 @@ def _open_long(ex, sym, stt):
         print(f'  ✅ 开多 {sym} {qty_tokens}{market.get("base")}(≈{notional_usdt:.2f}U) orderId={order.get("id")}')
         # 成交价(下单后立即查询, 用下单前 last 作为 entry 近似)
         entry_est = _fetch_entry_price(ex, sym, order.get("id"), last)
-        _record_open(sym, qty_contract, entry_est)
+        # 开仓即挂服务端止盈: 涨 TP_SERVER_PCT(20%) 平 TP_SERVER_FRAC(50%), 剩余交移动止盈
+        half = _place_half_tp(ex, sym, market, qty_tokens, entry_est)
+        # 状态记录: 移动止盈只负责剩余一半(服务端止盈已覆盖最初那一半)
+        _record_open(sym, half, entry_est)
         tg_send(
             f"📈 <b>Bitget币安式 · 开多</b>\n"
             f"币种: {base}\n"
@@ -325,6 +328,49 @@ def load_opens():
     return {}
 def save_opens(opens):
     json.dump(opens, open(OPEN_FILE, 'w'), indent=2)
+def _place_half_tp(ex, sym, market, bought_qty, entry_price):
+    """开仓后给 LONG 挂服务端减半止盈计划单:
+    触发价 = 开仓价*(1+TP_SERVER_PCT), 数量 = bought_qty*TP_SERVER_FRAC(sell/reduce).
+    返回给移动止盈留管的剩余数量(向下取整到可交易单位)。
+    挂失败不阻断开仓(仅告警), 此时返回全额让移动止盈接管。
+    """
+    try:
+        if not ex.markets:
+            ex.load_markets()
+        sid = (market.get("info") or {}).get("symbol") or market.get("id")
+        pp = int((market.get("info") or {}).get("pricePlace", "8"))
+        tp_price = entry_price * (1 + TP_SERVER_PCT)
+        tp_r = math.floor(tp_price * (10 ** pp)) / (10 ** pp)
+        half = bought_qty * TP_SERVER_FRAC
+        half = float(ex.amount_to_precision(sym, half))
+        if half <= 0 or half >= bought_qty:
+            print(f'  ⚠️ {sym} 减半止盈计算异常(half={half} bq={bought_qty}), 交由移动止盈全接管')
+            return bought_qty
+        # 查重: 是否已有同币同触发价的 reduce sell 计划单
+        dup = False
+        try:
+            pr = ex.private_mix_get_v2_mix_order_orders_plan_pending(
+                {"productType": "USDT-FUTURES", "symbol": sid, "planType": "normal_plan"})
+            for x in ((pr.get("data") or {}).get("entrustedList", [])):
+                if str(x.get("side")) == "sell" and abs(float(x.get("triggerPrice", 0)) - tp_r) < 1e-8:
+                    dup = True; break
+        except Exception as e:
+            print(f'  (查计划单异常 {sym}: {str(e)[:50]})')
+        if dup:
+            print(f'  ⏭ {sym} 已有 +{int(TP_SERVER_PCT*100)}% 减半止盈计划单 @ {tp_r}, 不重复挂')
+            return half
+        o = ex.create_trigger_order(sym, "market", "sell", half, None, tp_r, {
+            "hedged": True, "productType": "USDT-FUTURES", "reduceOnly": True})
+        if not (o and o.get("id")):
+            print(f'  ⚠️ {sym} 减半止盈下单无orderId: {o}, 全额交移动止盈')
+            return bought_qty
+        print(f'  🧾 {sym} 已挂减半止盈 @ {tp_r} (+{int(TP_SERVER_PCT*100)}%) qty={half}, 剩余交移动止盈')
+        return half
+    except Exception as e:
+        print(f'  ⚠️ {sym} 挂减半止盈失败: {str(e)[:120]}, 全额交移动止盈')
+        return bought_qty
+
+
 def _record_open(sym, qty, entry_price):
     opens = load_opens()
     opens[sym] = {
