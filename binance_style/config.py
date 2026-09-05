@@ -58,7 +58,7 @@ EXCLUDE_SYMBOLS = ["BTC", "ETH", "BNB"]
 TP_ACTIVATE_PCT = 0.20
 TP_DRAWDOWN_PCT = 0.15
 TP_SERVER_PCT = 0.20    # 开仓直接挂的服务端止盈触发涨幅(涨20%触发)
-TP_SERVER_FRAC = 0.50   # 该止盈单平掉仓位的 50%(一半); 剩余一半交移动止盈
+TP_SERVER_FRAC = 0.70   # 该止盈单平掉仓位的 70%; 剩余30%交移动止盈(娜姐2026-09-05: 50%→70%)
 
 # === TG 通知 ===
 TG_BOT_TOKEN = os.getenv("TG_BOT_TOKEN", "")
