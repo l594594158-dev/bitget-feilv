@@ -306,6 +306,22 @@ def scan_funding_and_detect(dry_run=False):
         except Exception as e:
             print(f'  ⚠️ 保存 track 状态失败: {e}')
 
+    # 3. 开仓前过滤: 若该币在 Bitget 已有真实多头持仓, 则跳过不重复开(娜姐2026-09-05 持仓过滤)
+    #    修复 AKE 类多次费率轮回反复叠仓问题: 同一币持仓期间不再重复开多.
+    if triggered and not dry_run:
+        try:
+            held = set()
+            for p in ex.fetch_positions():
+                if float(p.get('contracts') or 0) != 0 and p.get('side') == 'long':
+                    held.add(p['symbol'])
+            dup = [s for s in triggered if s in held]
+            if dup:
+                triggered = [s for s in triggered if s not in held]
+                for s in dup:
+                    print(f'  ⏭ {s} 已有Bitget多头持仓, 跳过重复开仓')
+        except Exception as e:
+            print(f'  ⚠️ 拉取真实持仓失败, 跳过持仓过滤(可能重复开仓): {str(e)[:90]}')
+
     # 3. 开仓(单向 LONG)
     if triggered and not dry_run:
         for sym, stt in triggered:
