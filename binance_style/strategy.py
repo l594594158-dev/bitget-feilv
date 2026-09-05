@@ -83,7 +83,13 @@ def tg_send(text: str):
         print(f"[TG ERR] {e}")
 
 # ═══════════════ 费率历史库 ═══════════════
-def load_rate_db():
+def load_rate_db(keep_per_symbol=720):
+    """载入费率历史: {symbol: [ {ts, rate, price}, ... ]} 旧→新
+
+    注(娜姐2026-09-05 OOM修复): 流式载入时每个币只保留最近 keep_per_symbol 条,
+    更早的记录直接丢弃, 避免把整份 jsonl(数百MB)全量载入内存导致 scan 进程
+    膨胀到 1GB+ 反复触发 OOM 杀掉 cron/gateway/策略自身.
+    分析/异动判断只用每币最近窗口(≤3000条), 不影响逻辑."""
     db = {}
     if os.path.exists(RATE_DB_FILE):
         for line in open(RATE_DB_FILE):
@@ -92,7 +98,14 @@ def load_rate_db():
                 continue
             try:
                 rec = json.loads(line)
-                db.setdefault(rec['symbol'], []).append(rec)
+                bucket = db.get(rec['symbol'])
+                if bucket is None:
+                    db[rec['symbol']] = [rec]
+                else:
+                    bucket.append(rec)
+                    # 只保留最近 keep 条, 控制内存
+                    if len(bucket) > keep_per_symbol:
+                        del bucket[:-keep_per_symbol]
             except Exception:
                 continue
     return db
@@ -224,7 +237,6 @@ def scan_funding_and_detect(dry_run=False):
     ex = get_exchange()
     if not ex.markets:
         ex.load_markets()
-    db = load_rate_db()
     track = load_track()
     now_ms = int(time.time() * 1000)
     ts_str = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M')
