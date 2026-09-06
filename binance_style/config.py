@@ -46,7 +46,7 @@ RECENT_HIGH_ABS = 0.0008    # 高位回落判定阈值: 窗口内出现过 |费�
 MAX_TRACK_SCANS = 300       # 单个币最多跟踪轮数(防无限, 中途跌回<0.01%即重置)
 
 # === 开仓参数(与币安一致) ===
-ORDER_MARGIN_USDT = 10.0    # 初始保证金 10U (娜姐 2026-09-03 10:31 调, 原20U/20->10)
+ORDER_MARGIN_USDT = 25.0    # 初始保证金 25U (娜姐 2026-09-06 调, 原10U)
 LEVERAGE = 10               # 10倍杠杆
 MARGIN_MODE = "crossed"     # 全仓
 POSITION_SIDE = "LONG"      # 只做多(双向模式的 LONG 侧)
