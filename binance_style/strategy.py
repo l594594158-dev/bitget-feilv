@@ -322,6 +322,30 @@ def scan_funding_and_detect(dry_run=False):
         except Exception as e:
             print(f'  ⚠️ 拉取真实持仓失败, 跳过持仓过滤(可能重复开仓): {str(e)[:90]}')
 
+    # 开仓前过滤(娜姐2026-09-07): 币近72h累计涨幅 >40% → 追高热门币不开仓
+    if triggered:
+        kept_t = []
+        for s, _st in triggered:
+            try:
+                ohl = ex.fetch_ohlcv(s, '4h', limit=20)
+                if not ohl:
+                    raise ValueError('empty ohlcv')
+                px_last = float(ohl[-1][4])
+                px_72 = None
+                for c in ohl:
+                    if float(c[0]) <= (now_ms - 72 * 3600 * 1000):
+                        px_72 = float(c[4])
+                if px_72 and px_72 > 0:
+                    r3 = (px_last - px_72) / px_72
+                    if r3 > MAX_RISE_3D_PCT:
+                        print(f'  🔒 {s} 近72h涨幅{r3*100:.1f}% > {MAX_RISE_3D_PCT*100:.0f}%, 追高过滤不开仓')
+                        continue
+            except Exception as e:
+                print(f'  ⚠️ {s} 近72h涨幅查询失败({str(e)[:50]}), 按通过处理')
+            kept_t.append((s, _st))
+        if len(kept_t) != len(triggered):
+            triggered = kept_t
+
     # 3. 开仓(单向 LONG)
     if triggered and not dry_run:
         for sym, stt in triggered:
