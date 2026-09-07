@@ -377,8 +377,11 @@ def _evaluate(sym, hist, st):
     start_price = st.get('start_price')
     if start_price and cur_px and start_price > 0:
         rise = (cur_px - start_price) / start_price
-        if rise > PRICE_RISE_PCT:
+        if rise > PRICE_RISE_PCT and rise < MAX_OPEN_RISE_PCT:
             return {'mode': 'consumed', 'start_price': start_price}, True
+        if rise >= MAX_OPEN_RISE_PCT:
+            print(f'  ⏸ {base} 价已超起点+{rise*100:.0f}%(≥{MAX_OPEN_RISE_PCT*100:.0f}%)涨幅封顶, 过触发线也不追, 放弃')
+            return None, False
     return {'mode': 'watching', 'start_price': start_price}, False
 
 # ═══════════════ 开仓(双向模式开 LONG) ═══════════════
