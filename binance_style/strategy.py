@@ -313,11 +313,17 @@ def scan_funding_and_detect(dry_run=False):
             held = set()
             for p in ex.fetch_positions():
                 if float(p.get('contracts') or 0) != 0 and p.get('side') == 'long':
-                    held.add(p['symbol'])
-            dup = [s for s in triggered if s in held]
-            if dup:
-                triggered = [s for s in triggered if s not in held]
-                for s in dup:
+                    s = p.get('symbol')
+                    if isinstance(s, str) and s:
+                        held.add(s)
+            # 修复(2026-09-09): triggered 元素是 (sym, state) 元组, 原写法拿元组对 held(字符串set)
+            #    做成员判断 → TypeError: unhashable type: 'dict', 被外层 except 吞掉 → 去重恒失效
+            #    (每次真触发都崩, 一路重复开仓). 改为只按 sym 域名去重后再回填.
+            dup_syms = [sym for sym, _st in triggered if sym in held]
+            if dup_syms:
+                held_syms = set(dup_syms)
+                triggered = [(sym, stt) for sym, stt in triggered if sym not in held_syms]
+                for s in dup_syms:
                     print(f'  ⏭ {s} 已有Bitget多头持仓, 跳过重复开仓')
         except Exception as e:
             print(f'  ⚠️ 拉取真实持仓失败, 跳过持仓过滤(可能重复开仓): {str(e)[:90]}')
