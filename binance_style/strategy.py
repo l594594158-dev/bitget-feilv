@@ -308,7 +308,15 @@ def scan_funding_and_detect(dry_run=False):
 
     # 3. 开仓前过滤: 若该币在 Bitget 已有真实多头持仓, 则跳过不重复开(娜姐2026-09-05 持仓过滤)
     #    修复 AKE 类多次费率轮回反复叠仓问题: 同一币持仓期间不再重复开多.
+    #    [2026-09-09 深度加固] (a)原写法用 (sym,dict)元组对字符串set做成员判断→每笔真触发必崩
+    #        TypeError unhashable, 被 except 吞掉→去重恒失效→一路重复叠开; 已改为按 sym 去重回填.
+    #       (b)原 except 只打印告警不挡单→真实拉仓瞬时失败会照样开→叠仓. 现: 失败时完全回退本地
+    #        open_positions 记账去重(记账=已发过开仓单的最权威凭据), 绝不让过滤被静默旁路.
     if triggered and not dry_run:
+        try:
+            local_held = {s for s in (load_opens() or {}).keys() if isinstance(s, str)}
+        except Exception:
+            local_held = set()
         try:
             held = set()
             for p in ex.fetch_positions():
@@ -316,17 +324,17 @@ def scan_funding_and_detect(dry_run=False):
                     s = p.get('symbol')
                     if isinstance(s, str) and s:
                         held.add(s)
-            # 修复(2026-09-09): triggered 元素是 (sym, state) 元组, 原写法拿元组对 held(字符串set)
-            #    做成员判断 → TypeError: unhashable type: 'dict', 被外层 except 吞掉 → 去重恒失效
-            #    (每次真触发都崩, 一路重复开仓). 改为只按 sym 域名去重后再回填.
-            dup_syms = [sym for sym, _st in triggered if sym in held]
-            if dup_syms:
-                held_syms = set(dup_syms)
-                triggered = [(sym, stt) for sym, stt in triggered if sym not in held_syms]
-                for s in dup_syms:
-                    print(f'  ⏭ {s} 已有Bitget多头持仓, 跳过重复开仓')
+            held |= local_held  # 真实持仓 + 本地记账 并集: 防下单后撮合/跨轮同步滞后导致的叠开
         except Exception as e:
-            print(f'  ⚠️ 拉取真实持仓失败, 跳过持仓过滤(可能重复开仓): {str(e)[:90]}')
+            held = set(local_held)  # 拉取失败→完全回退本地记账(至少已开/已下单的币挡着不开)
+            print(f'  ⚠️ 拉取真实持仓失败({str(e)[:70]}), 回退本地记账去重({len(held)}个在持/已下单)')
+        # 只按 sym 域名去重回填
+        dup_syms = [sym for sym, _st in triggered if sym in held]
+        if dup_syms:
+            held_syms = set(dup_syms)
+            triggered = [(sym, stt) for sym, stt in triggered if sym not in held_syms]
+            for s in dup_syms:
+                print(f'  ⏭ {s} 已有Bitget多头持仓或已下单, 跳过重复开仓')
 
     # 开仓前过滤(娜姐2026-09-07): 币近72h累计涨幅 >40% → 追高热门币不开仓
     if triggered:
@@ -575,18 +583,25 @@ def _trailing_tp_check(ex):
         ex.load_markets()
 
     # 幽灵清理: 以 Bitget 真实 LONG 持仓为准
+    # [2026-09-09 加固] 只有真实拉取成功(fetch_ok)才允许清幽灵; 失败/瞬断时不清理(防止把
+    #    真实在持币的记账误删 → 下一轮 scan 因本地账本缺失而重复叠开, 与币安全仓侧看齐).
+    fetch_ok = False
+    actual_long = set()
     try:
-        actual_long = set()
         for p in ex.fetch_positions():
             if float(p.get('contracts') or 0) != 0 and p.get('side') == 'long':
-                actual_long.add(p['symbol'])
-        removed = [s for s in opens if s not in actual_long]
+                s = p.get('symbol')
+                if isinstance(s, str) and s:
+                    actual_long.add(s)
+        fetch_ok = True
+    except Exception as e:
+        print(f'  ⚠️ 拉真实持仓失败, 跳过幽灵清理(保留记账防误删): {str(e)[:80]}')
+    if fetch_ok:
+        removed = [s for s in list(opens) if s not in actual_long]
         if removed:
             for s in removed:
                 opens.pop(s, None)
                 print(f'  🧹 {s} Bitget已无LONG持仓, 清除幽灵记录')
-    except Exception as e:
-        print(f'  ⚠️ 拉真实持仓失败: {str(e)[:80]}')
 
     for sym, st in list(opens.items()):
         try:
