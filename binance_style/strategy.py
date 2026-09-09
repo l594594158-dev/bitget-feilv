@@ -360,6 +360,29 @@ def scan_funding_and_detect(dry_run=False):
         if len(kept_t) != len(triggered):
             triggered = kept_t
 
+    # 开仓前过滤(娜姐2026-09-10 新增): 日/24h涨幅过滤 <15%. 堵盲点: 当日单日暴拉(如RAY ~24%)
+    #    即使起底价建在拉高后(起底后涨幅小)、72h平滑处理, 也照样追高; 这里直接以现价 vs 24h前收盘
+    #    (1h K线)判 24h涨幅 >=MAX_DAY_RISE_PCT → 不开仓.
+    if triggered:
+        kept_t = []
+        for s, _st in triggered:
+            try:
+                hod = ex.fetch_ohlcv(s, '1h', limit=25)
+                if not hod or len(hod) < 24:
+                    raise ValueError('insufficient 1h ohlcv')
+                px_now = float(hod[-1][4])
+                px_24 = float(hod[-24][4])
+                if px_24 and px_24 > 0:
+                    dr = (px_now - px_24) / px_24
+                    if dr >= MAX_DAY_RISE_PCT:
+                        print(f'  🔒 {s} 24h涨幅{dr*100:.1f}% >= {MAX_DAY_RISE_PCT*100:.0f}%, 日涨幅过滤不开仓')
+                        continue
+            except Exception as e:
+                print(f'  ⚠️ {s} 24h涨幅查询失败({str(e)[:50]}), 按通过处理')
+            kept_t.append((s, _st))
+        if len(kept_t) != len(triggered):
+            triggered = kept_t
+
     # 3. 开仓(单向 LONG)
     if triggered and not dry_run:
         for sym, stt in triggered:
