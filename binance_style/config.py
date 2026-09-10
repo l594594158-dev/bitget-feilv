@@ -50,7 +50,7 @@ MAX_TRACK_SCANS = 300       # 单个币最多跟踪轮数(防无限, 中途跌�
 
 # === 开仓参数(与币安一致) ===
 ORDER_MARGIN_USDT = 20.0    # 初始保证金 20U (娜姐 2026-09-09 调: 25U→20U; 25U是09-06从10U调来)
-LEVERAGE = 10               # 10倍杠杆
+LEVERAGE = 5                # 5倍杠杆(娜姐 2026-09-10 调: 10→5)
 MARGIN_MODE = "crossed"     # 全仓
 POSITION_SIDE = "LONG"      # 只做多(双向模式的 LONG 侧)
 
