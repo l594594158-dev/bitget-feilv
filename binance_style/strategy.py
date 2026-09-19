@@ -395,14 +395,11 @@ def scan_funding_and_detect(dry_run=False):
 
 # ═══════════════ 异动评估(与币安一致, 用 Bitget 费率) ═══════════════
 def _evaluate(sym, hist, st):
-    """费率异动跟踪评估 (娜姐 2026-09-19 新方案定稿). 规则(每轮扫描):
+    """费率异动跟踪评估 (娜姐 2026-09-19 定稿). 规则(每轮扫描):
       - 费率绝对值 <0.05% : 回到低位, 清除监控(退出, 起点作废)
-      - 费率绝对值 [0.05%,0.08%) : 从 <0.05% 首次跨进 → 建起点(记起点价+起点时间)
-      - 费率绝对值 [0.08%,0.2%) 爬升区: 已监控→起点不变; 未监控→不建起点
-      - 费率绝对值 >=0.2% 触发区:
-          * 无有效起点 → 不触发
-          * 有有效起点且 起点->触发 <=30分钟(且>=1分钟) → 触发开多
-          * 超时 → 放弃
+      - 费率绝对值 >=0.05% : 从 <0.05% 首次跨进即为【起点】(不设上限), 记起点价+起点时间
+      - 已监控 + 费率 >=0.2% : 起点->触发 <=30分钟(且>=1分钟) → 触发开多; 超时放弃
+      - 已监控 + 未到0.2% : 起点不变, 继续等
     """
     base = sym.split('/')[0]
     last = hist[-1]
@@ -411,22 +408,18 @@ def _evaluate(sym, hist, st):
     cur_ts = last.get('ts')
     mode = (st or {}).get('mode', 'none')
 
-    # ── 费率绝对值 <0.05%: 回到低位, 清除监控 ──
+    # ── 费率 <0.05%: 回到低位, 清除监控 ──
     if abs_rate < TRACK_START_ABS:
         return None, False
 
-    # ── 费率 [0.05%,0.08%): 起点区 ──
-    if abs_rate < TRACK_START_MAX:
-        if mode == 'watching':
-            return {'mode': 'watching', 'start_price': st.get('start_price'),
-                    'start_ts': st.get('start_ts')}, False
+    # ── 费率 >=0.05%: 首次跨进即为起点(不设上限) ──
+    if mode != 'watching' or st.get('start_price') is None:
         return {'mode': 'watching', 'start_price': cur_px, 'start_ts': cur_ts}, False
 
-    # ── 费率 >=0.2%: 触发区 ──
+    # ── 已在监控: 判断是否触发 ──
+    start_ts = st.get('start_ts')
+    start_price = st.get('start_price')
     if abs_rate >= TRACK_TRIGGER_ABS:
-        if mode != 'watching' or st.get('start_price') is None:
-            return None, False
-        start_ts = st.get('start_ts')
         if start_ts and cur_ts:
             climb_min = (cur_ts - start_ts) / 60000.0
             if climb_min < 0 or climb_min > MAX_CLIMB_MINUTES:
@@ -434,14 +427,12 @@ def _evaluate(sym, hist, st):
                 return None, False
             if (cur_ts - start_ts) < 60000:
                 return None, False   # 同一分钟瞬间蹦, 放弃
-        return {'mode': 'consumed', 'start_price': st.get('start_price'),
+        return {'mode': 'consumed', 'start_price': start_price,
                 'start_ts': start_ts}, True
 
-    # ── 费率 [0.08%,0.2%): 爬升区 ──
-    if mode == 'watching':
-        return {'mode': 'watching', 'start_price': st.get('start_price'),
-                'start_ts': st.get('start_ts')}, False
-    return None, False
+    # ── 已监控但费率未到 0.2%: 起点不变, 继续等 ──
+    return {'mode': 'watching', 'start_price': start_price,
+            'start_ts': start_ts}, False
 
 # ═══════════════ 开仓(双向模式开 LONG) ═══════════════
 def _open_long(ex, sym, stt):
