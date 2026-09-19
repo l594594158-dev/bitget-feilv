@@ -42,8 +42,8 @@ TRACK_TRIGGER_ABS = 0.0020  # 触发: 费率绝对值爬到 >=0.2% (娜姐2026-0
 MAX_CLIMB_MINUTES = 30      # 爬升窗口: 起点到触发须 <=30分钟
 PRICE_RISE_PCT = 0.0        # 新方案: 取消'开仓价较起点涨>5%'条件
 MAX_OPEN_RISE_PCT = 999.0   # 新方案: 取消涨幅封顶
-MAX_RISE_3D_PCT = 0.30      # 保留: 72h涨幅>30% 不开仓
-MAX_DAY_RISE_PCT = 0.15     # 保留: 24h涨幅>=15% 不开仓
+MAX_RISE_3D_PCT = 0.40      # 72h涨幅>40% 不开仓 [娜姐2026-09-19 21:33: 30%→40%]
+MAX_DAY_RISE_PCT = 0.25     # 24h涨幅>=25% 不开仓 [娜姐2026-09-19 21:33: 15%→25%]
 MAX_RISE_ABANDON_PCT = 999.0 # 新方案: 取消'涨幅封顶放弃'
 RECENT_HIGH_WINDOW_MIN = 0  # 新方案: 取消高位回落过滤
 RECENT_HIGH_ABS = 0.0000
