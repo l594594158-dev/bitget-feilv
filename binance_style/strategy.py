@@ -395,55 +395,53 @@ def scan_funding_and_detect(dry_run=False):
 
 # ═══════════════ 异动评估(与币安一致, 用 Bitget 费率) ═══════════════
 def _evaluate(sym, hist, st):
-    """费率异动跟踪评估. 规则(每轮扫描):
-      - 费率绝对值 [0.01%,0.05%) : 未监控→建起点; 已监控→起点价不变
-      - 费率绝对值 <0.01% : 清除监控(退出, 起点作废)
-      - 费率绝对值 [0.05%,0.10%) 爬升区: 已监控→起点不变; 未监控→不建起点
-      - 费率绝对值 >=0.10% 高位区:
-          * 无有效起点(没经起点区直接跳高位)→ 不建、不触发
-          * 有有效起点 → (现价-起点)/起点 >5% → 触发开多; 否则等待价格涨够
+    """费率异动跟踪评估 (娜姐 2026-09-19 新方案定稿). 规则(每轮扫描):
+      - 费率绝对值 <0.05% : 回到低位, 清除监控(退出, 起点作废)
+      - 费率绝对值 [0.05%,0.08%) : 从 <0.05% 首次跨进 → 建起点(记起点价+起点时间)
+      - 费率绝对值 [0.08%,0.2%) 爬升区: 已监控→起点不变; 未监控→不建起点
+      - 费率绝对值 >=0.2% 触发区:
+          * 无有效起点 → 不触发
+          * 有有效起点且 起点->触发 <=30分钟(且>=1分钟) → 触发开多
+          * 超时 → 放弃
     """
     base = sym.split('/')[0]
     last = hist[-1]
     abs_rate = abs(last['rate'])
     cur_px = last.get('price')
+    cur_ts = last.get('ts')
     mode = (st or {}).get('mode', 'none')
 
-    # ── 涨幅封顶放弃(方案A, 娜姐2026-09-03, 与币安同步): 价先飞、费率跟不上则清币 ──
-    _sp = (st or {}).get('start_price')
-    if (mode == 'watching' and _sp and cur_px and _sp > 0 and abs_rate < TRACK_TRIGGER_ABS):
-        _rise = (cur_px - _sp) / _sp
-        if _rise > MAX_RISE_ABANDON_PCT:
-            print(f'  ⏬ {base} 价已超起点+{_rise*100:.0f}%(>{MAX_RISE_ABANDON_PCT*100:.0f}%)但费率仅{abs_rate*100:.3f}%未达触发线, 假蓄势, 放弃')
-            return None, False
-
+    # ── 费率绝对值 <0.05%: 回到低位, 清除监控 ──
     if abs_rate < TRACK_START_ABS:
         return None, False
+
+    # ── 费率 [0.05%,0.08%): 起点区 ──
     if abs_rate < TRACK_START_MAX:
-        # 高位回落过滤(娜姐2026-09-03): 最近RECENT_HIGH_WINDOW_MIN分钟内出现过|费率|>=0.10%高位→不建起点/清出监控
-        if had_recent_high(hist):
-            return None, False
         if mode == 'watching':
-            return {'mode': 'watching', 'start_price': st.get('start_price')}, False
-        else:
-            return {'mode': 'watching', 'start_price': cur_px}, False
-    if abs_rate < TRACK_TRIGGER_ABS:
-        if mode == 'watching':
-            return {'mode': 'watching', 'start_price': st.get('start_price')}, False
-        else:
+            return {'mode': 'watching', 'start_price': st.get('start_price'),
+                    'start_ts': st.get('start_ts')}, False
+        return {'mode': 'watching', 'start_price': cur_px, 'start_ts': cur_ts}, False
+
+    # ── 费率 >=0.2%: 触发区 ──
+    if abs_rate >= TRACK_TRIGGER_ABS:
+        if mode != 'watching' or st.get('start_price') is None:
             return None, False
-    # >= 0.10% 高位区
-    if mode != 'watching' or st.get('start_price') is None:
-        return None, False
-    start_price = st.get('start_price')
-    if start_price and cur_px and start_price > 0:
-        rise = (cur_px - start_price) / start_price
-        if rise > PRICE_RISE_PCT and rise < MAX_OPEN_RISE_PCT:
-            return {'mode': 'consumed', 'start_price': start_price}, True
-        if rise >= MAX_OPEN_RISE_PCT:
-            print(f'  ⏸ {base} 价已超起点+{rise*100:.0f}%(≥{MAX_OPEN_RISE_PCT*100:.0f}%)涨幅封顶, 过触发线也不追, 放弃')
-            return None, False
-    return {'mode': 'watching', 'start_price': start_price}, False
+        start_ts = st.get('start_ts')
+        if start_ts and cur_ts:
+            climb_min = (cur_ts - start_ts) / 60000.0
+            if climb_min < 0 or climb_min > MAX_CLIMB_MINUTES:
+                print(f'  ⌛ {base} 费率爬升{climb_min:.0f}分钟>{MAX_CLIMB_MINUTES}分钟, 放弃')
+                return None, False
+            if (cur_ts - start_ts) < 60000:
+                return None, False   # 同一分钟瞬间蹦, 放弃
+        return {'mode': 'consumed', 'start_price': st.get('start_price'),
+                'start_ts': start_ts}, True
+
+    # ── 费率 [0.08%,0.2%): 爬升区 ──
+    if mode == 'watching':
+        return {'mode': 'watching', 'start_price': st.get('start_price'),
+                'start_ts': st.get('start_ts')}, False
+    return None, False
 
 # ═══════════════ 开仓(双向模式开 LONG) ═══════════════
 def _open_long(ex, sym, stt):
@@ -499,9 +497,12 @@ def _open_long(ex, sym, stt):
         print(f'  ✅ 开多 {sym} {qty_tokens}{market.get("base")}(≈{notional_usdt:.2f}U) orderId={order.get("id")}')
         # 成交价(下单后立即查询, 用下单前 last 作为 entry 近似)
         entry_est = _fetch_entry_price(ex, sym, order.get("id"), last)
-        # 开仓即挂服务端止盈: 涨 TP_SERVER_PCT(20%) 平 TP_SERVER_FRAC(50%), 剩余交移动止盈
-        half = _place_half_tp(ex, sym, market, qty_tokens, entry_est)
-        # 状态记录: 移动止盈只负责剩余一半(服务端止盈已覆盖最初那一半)
+        # 新方案(娜姐2026-09-19): 不挂服务端分批止盈, 全仓交移动止盈 (TP_SERVER_FRAC=0)
+        if TP_SERVER_FRAC and TP_SERVER_FRAC > 0:
+            half = _place_half_tp(ex, sym, market, qty_tokens, entry_est)
+        else:
+            half = None   # 全部仓位交移动止盈
+        # 状态记录
         _record_open(sym, half, entry_est)
         tg_send(
             f"📈 <b>Bitget币安式 · 开多</b>\n"
@@ -588,14 +589,16 @@ def _place_half_tp(ex, sym, market, bought_qty, entry_price):
 
 def _record_open(sym, qty, entry_price):
     opens = load_opens()
+    # qty=None 表示全仓交移动止盈(未分批); 否则为移动止盈负责的剩余数量
     opens[sym] = {
         'qty': qty, 'entry_price': entry_price,
         'activate': entry_price * (1 + TP_ACTIVATE_PCT),
         'trailing_high': entry_price, 'activated': False,
+        'stop_loss': entry_price * (1 - HARD_SL_PCT),
         'open_time': datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC'),
     }
     save_opens(opens)
-    print(f'  📇 记录开仓状态 {sym} entry={entry_price} qty张={qty}')
+    print(f'  📇 记录开仓状态 {sym} entry={entry_price} qty张={qty} SL={entry_price*(1-HARD_SL_PCT):.6g}')
 
 # ═══════════════ 跟踪止盈巡检 ═══════════════
 def _trailing_tp_check(ex):
@@ -633,6 +636,12 @@ def _trailing_tp_check(ex):
             high = st['trailing_high']
             if last > high:
                 st['trailing_high'] = last; high = last
+            # ── 硬止损(娜姐2026-09-19): 亏 HARD_SL_PCT(50%) → 全平 ──
+            if last <= entry * (1 - HARD_SL_PCT):
+                print(f'  🛑 {sym} 触发止损 -{HARD_SL_PCT*100:.0f}% @ {last} (entry={entry})')
+                if _close_long(ex, sym, st):
+                    opens.pop(sym, None)
+                continue
             if not st['activated']:
                 if last >= entry * (1 + TP_ACTIVATE_PCT):
                     st['activated'] = True
@@ -651,13 +660,24 @@ def _close_long(ex, sym, st):
     try:
         if not ex.markets:
             ex.load_markets()
-        # 双向模式 LONG 平仓 = sell reduce. Bitget 允许 reduceOnly? 参考罗海: 平仓用 create_order+reduceOnly
-        order = ex.create_order(sym, "market", "sell", float(st['qty']), None, {
+        # qty=None → 全仓平: 回读真实 LONG 持仓数量; 否则平 st['qty']
+        close_qty = st.get('qty')
+        if not close_qty:
+            try:
+                for p in ex.fetch_positions([sym]):
+                    if float(p.get('contracts') or 0) != 0 and p.get('side') == 'long':
+                        close_qty = abs(float(p.get('contracts') or 0)); break
+            except Exception:
+                pass
+        if not close_qty:
+            print(f'  ⚠️ {sym} 平仓数量未知且未能回读持仓, 跳过(下轮重试)')
+            return False
+        order = ex.create_order(sym, "market", "sell", float(close_qty), None, {
             "hedged": True,
             "reduceOnly": True,
             "productType": "USDT-FUTURES",
         })
-        print(f'  ✅ 移动止盈平多 {sym} qty={st["qty"]} orderId={order.get("id")}')
+        print(f'  ✅ 平多 {sym} qty={close_qty} orderId={order.get("id")}')
         return True
     except Exception as e:
         print(f'  ❌ {sym} 平仓失败: {str(e)[:150]}')
