@@ -440,8 +440,8 @@ def _evaluate(sym, hist, st, in_pool1):
     start_ts = st.get('start_ts')
     start_price = st.get('start_price')
 
-    # ★超时踢出(娜姐2026-09-19 23:07): 进池子2起满 MAX_CLIMB_MINUTES(30)分钟, 费率仍未到 0.2%
-    #   → 立即踢出池子2(不管费率停在 0.05%~0.2% 之间的哪一档)。
+    # ★超时踢出(娜姐2026-09-19 23:07, 2026-09-20 00:52 窗口改4小时): 从进池子2起满 MAX_CLIMB_MINUTES(240=4小时)分钟,
+    #   费率仍未到 0.2% → 立即踢出池子2。
     if start_ts and cur_ts:
         climb_min = (cur_ts - start_ts) / 60000.0
         if climb_min > MAX_CLIMB_MINUTES and abs_rate < TRACK_TRIGGER_ABS:
