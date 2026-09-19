@@ -62,8 +62,8 @@ EXCLUDE_SYMBOLS = ["BTC", "ETH", "BNB"]
 TP_ACTIVATE_PCT = 0.20   # 移动止盈: 涨20%激活
 TP_DRAWDOWN_PCT = 0.15   # 从最高回撤15%平 (全仓平)
 TP_SERVER_PCT = 0.20     # 保留字段(新方案不挂分批止盈)
-TP_SERVER_FRAC = 0.0     # 新方案: 不挂服务端分批止盈, 全仓交移动止盈
-HARD_SL_PCT = 0.50       # 硬止损: 亏50%平仓
+TP_SERVER_FRAC = 0.30    # 开仓即挂服务端止盈单: 涨20% → 平掉 30% 仓位 (娜姐2026-09-19 21:14 定)
+HARD_SL_PCT = 0.0        # 不挂止损单 (娜姐2026-09-19 21:14: 取消挂止损单)
 NO_EXPIRY = True         # 持仓无限期, 不设到期强平
 
 # === TG 通知 ===

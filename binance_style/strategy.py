@@ -589,16 +589,15 @@ def _place_half_tp(ex, sym, market, bought_qty, entry_price):
 
 def _record_open(sym, qty, entry_price):
     opens = load_opens()
-    # qty=None 表示全仓交移动止盈(未分批); 否则为移动止盈负责的剩余数量
+    # qty 为移动止盈负责的剩余数量(服务端止盈已覆盖 TP_SERVER_FRAC 部分)
     opens[sym] = {
         'qty': qty, 'entry_price': entry_price,
         'activate': entry_price * (1 + TP_ACTIVATE_PCT),
         'trailing_high': entry_price, 'activated': False,
-        'stop_loss': entry_price * (1 - HARD_SL_PCT),
         'open_time': datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC'),
     }
     save_opens(opens)
-    print(f'  📇 记录开仓状态 {sym} entry={entry_price} qty张={qty} SL={entry_price*(1-HARD_SL_PCT):.6g}')
+    print(f'  📇 记录开仓状态 {sym} entry={entry_price} qty张={qty}')
 
 # ═══════════════ 跟踪止盈巡检 ═══════════════
 def _trailing_tp_check(ex):
@@ -636,12 +635,6 @@ def _trailing_tp_check(ex):
             high = st['trailing_high']
             if last > high:
                 st['trailing_high'] = last; high = last
-            # ── 硬止损(娜姐2026-09-19): 亏 HARD_SL_PCT(50%) → 全平 ──
-            if last <= entry * (1 - HARD_SL_PCT):
-                print(f'  🛑 {sym} 触发止损 -{HARD_SL_PCT*100:.0f}% @ {last} (entry={entry})')
-                if _close_long(ex, sym, st):
-                    opens.pop(sym, None)
-                continue
             if not st['activated']:
                 if last >= entry * (1 + TP_ACTIVATE_PCT):
                     st['activated'] = True
