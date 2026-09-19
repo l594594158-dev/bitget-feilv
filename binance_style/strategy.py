@@ -413,7 +413,8 @@ def _evaluate(sym, hist, st):
         return None, False
 
     # ── 费率 >=0.05%: 首次跨进即为起点(不设上限) ──
-    if mode != 'watching' or st.get('start_price') is None:
+    # 兼容旧脏数据: 若已在监控但缺 start_ts, 补上当前时间(否则旧监控永远卡死)
+    if mode != 'watching' or st.get('start_price') is None or not st.get('start_ts'):
         return {'mode': 'watching', 'start_price': cur_px, 'start_ts': cur_ts}, False
 
     # ── 已在监控: 判断是否触发 ──
