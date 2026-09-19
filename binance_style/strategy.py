@@ -238,6 +238,13 @@ def scan_funding_and_detect(dry_run=False):
     if not ex.markets:
         ex.load_markets()
     track = load_track()
+    # 两池结构(mode='pool1'/'pool2'); 兼容旧格式
+    if isinstance(track, dict) and ('pool1' in track or 'pool2' in track):
+        pool1 = set(track.get('pool1') or [])
+        pool2 = dict(track.get('pool2') or {})
+    else:
+        pool1 = set()
+        pool2 = {}
     now_ms = int(time.time() * 1000)
     ts_str = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M')
 
@@ -288,21 +295,29 @@ def scan_funding_and_detect(dry_run=False):
             hist = db.get(sym, [])
             if not hist:
                 continue
-            st = track.get(sym, {})
-            new_st, did_trigger = _evaluate(sym, hist, st)
-            if did_trigger and new_st:
-                triggered.append((sym, dict(new_st)))
+            # 池子1(候选): 本轮扫描前该币是否在池子1中
+            in_pool1 = sym in pool1
+            st = pool2.get(sym, {})
+            hold1, new_st2, did_trigger = _evaluate(sym, hist, st, in_pool1)
+            if did_trigger and new_st2:
+                triggered.append((sym, dict(new_st2)))
             elif did_trigger:
-                print(f'  ⚠️ {sym} did_trigger=True 但 new_st=None, 忽略')
-            if new_st is None:
-                track.pop(sym, None)
-            elif new_st.get('mode') == 'consumed':
-                track.pop(sym, None)
+                print(f'  ⚠️ {sym} did_trigger=True 但 new_st2=None, 忽略')
+            # 更新池子1
+            if hold1:
+                pool1.add(sym)
             else:
-                track[sym] = new_st
+                pool1.discard(sym)
+            # 更新池子2
+            if new_st2 is None:
+                pool2.pop(sym, None)
+            elif new_st2.get('mode') == 'consumed':
+                pool2.pop(sym, None)
+            else:
+                pool2[sym] = new_st2
     finally:
         try:
-            save_track(track)
+            save_track({'pool1': sorted(pool1), 'pool2': pool2})
         except Exception as e:
             print(f'  ⚠️ 保存 track 状态失败: {e}')
 
@@ -394,12 +409,14 @@ def scan_funding_and_detect(dry_run=False):
     return triggered
 
 # ═══════════════ 异动评估(与币安一致, 用 Bitget 费率) ═══════════════
-def _evaluate(sym, hist, st):
-    """费率异动跟踪评估 (娜姐 2026-09-19 定稿). 规则(每轮扫描):
-      - 费率绝对值 <0.05% : 回到低位, 清除监控(退出, 起点作废)
-      - 费率绝对值 >=0.05% : 从 <0.05% 首次跨进即为【起点】(不设上限), 记起点价+起点时间
-      - 已监控 + 费率 >=0.2% : 起点->触发 <=30分钟(且>=1分钟) → 触发开多; 超时放弃
-      - 已监控 + 未到0.2% : 起点不变, 继续等
+def _evaluate(sym, hist, st, in_pool1):
+    """两池逻辑 (娜姐 2026-09-19 定稿).
+
+    池子1(候选池): 只装 |费率| < 0.05% 的币。币要进池子2, 必须先蹲过池子1。
+    池子2(跟踪池): 由池子1晋升而来(费率首次 >=0.05%)。进入池子2那一分钟 = 30分钟计时起点。
+    触发: 池子2中 费率 > 0.2% → 开仓。
+    超时: 30分钟没到0.2% → 踢出池子2。
+    回落: 费率跌回 <0.05% → 回池子1。
     """
     base = sym.split('/')[0]
     last = hist[-1]
@@ -408,32 +425,33 @@ def _evaluate(sym, hist, st):
     cur_ts = last.get('ts')
     mode = (st or {}).get('mode', 'none')
 
-    # ── 费率 <0.05%: 回到低位, 清除监控 ──
+    # ── 费率 <0.05%: 回池子1 ──
     if abs_rate < TRACK_START_ABS:
-        return None, False
+        return True, None, False
 
-    # ── 费率 >=0.05%: 首次跨进即为起点(不设上限) ──
-    # 兼容旧脏数据: 若已在监控但缺 start_ts, 补上当前时间(否则旧监控永远卡死)
+    # ── 费率 >=0.05% ──
     if mode != 'watching' or st.get('start_price') is None or not st.get('start_ts'):
-        return {'mode': 'watching', 'start_price': cur_px, 'start_ts': cur_ts}, False
+        if not in_pool1:
+            # ★铁律: 没在池子1待过 → 直接跳过
+            return False, None, False
+        # 从池子1晋升进池子2: 本分钟 = 计时起点
+        return False, {'mode': 'watching', 'start_price': cur_px, 'start_ts': cur_ts}, False
 
-    # ── 已在监控: 判断是否触发 ──
     start_ts = st.get('start_ts')
     start_price = st.get('start_price')
     if abs_rate >= TRACK_TRIGGER_ABS:
         if start_ts and cur_ts:
             climb_min = (cur_ts - start_ts) / 60000.0
             if climb_min < 0 or climb_min > MAX_CLIMB_MINUTES:
-                print(f'  ⌛ {base} 费率爬升{climb_min:.0f}分钟>{MAX_CLIMB_MINUTES}分钟, 放弃')
-                return None, False
+                print(f'  ⌛ {base} 进池子2后{climb_min:.0f}分钟>{MAX_CLIMB_MINUTES}分钟未到0.2%, 踢出')
+                return False, None, False
             if (cur_ts - start_ts) < 60000:
-                return None, False   # 同一分钟瞬间蹦, 放弃
-        return {'mode': 'consumed', 'start_price': start_price,
-                'start_ts': start_ts}, True
+                return False, None, False   # 同一分钟瞬间蹦, 放弃
+        return False, {'mode': 'consumed', 'start_price': start_price,
+                       'start_ts': start_ts}, True
 
-    # ── 已监控但费率未到 0.2%: 起点不变, 继续等 ──
-    return {'mode': 'watching', 'start_price': start_price,
-            'start_ts': start_ts}, False
+    return False, {'mode': 'watching', 'start_price': start_price,
+                   'start_ts': start_ts}, False
 
 # ═══════════════ 开仓(双向模式开 LONG) ═══════════════
 def _open_long(ex, sym, stt):
